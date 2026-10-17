@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071b21" />
+    <meta name="description" content="A digital notepad for chemistry homework: write your working, balance equations, convert units, and keep every page." />
+    <title>Digital Notepad — a notepad for chemistry homework</title>
+    <link rel="icon" href="favicon.svg?v=1" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=20261017-01" />
+  </head>
+  <body>
+    <a class="skip-link" href="#command-input">Skip to command input</a>
+
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Digital Notepad home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>DIGITAL NOTEPAD</span>
+      </a>
+      <p class="tagline">A notepad for chemistry homework.</p>
+      <div class="header-actions">
+        <button class="quiet-button cloud-sync-toggle" id="cloud-sync-button" type="button" aria-haspopup="dialog">Cloud sync</button>
+        <button class="quiet-button saved-work-toggle" id="saved-work-toggle" type="button" aria-expanded="false" aria-controls="saved-work-drawer">Saved notes</button>
+        <div class="calculator-menu">
+          <button class="quiet-button calculator-toggle" id="calculator-toggle" type="button" aria-expanded="false" aria-controls="calculator-popover">Calculator <kbd>⌥ C</kbd></button>
+          <section class="calculator-popover" id="calculator-popover" aria-label="Calculator" hidden>
+            <div class="calculator-popover-heading" title="Drag to move">
+              <span>Calculator</span>
+              <button type="button" id="calculator-close" aria-label="Close calculator">×</button>
+            </div>
+            <input id="calculator-input" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="0" aria-label="Calculator expression" aria-describedby="calculator-result" />
+            <button type="button" class="calculator-result" id="calculator-result" aria-live="polite">Ready</button>
+            <div class="calculator-pad" aria-label="Calculator keys">
+              <button type="button" data-calc-action="clear">AC</button><button type="button" data-calc-action="backspace">⌫</button><button type="button" data-calc-value="(">(</button><button type="button" data-calc-value=")">)</button>
+              <button type="button" data-calc-value="7">7</button><button type="button" data-calc-value="8">8</button><button type="button" data-calc-value="9">9</button><button type="button" data-calc-value="/">÷</button>
+              <button type="button" data-calc-value="4">4</button><button type="button" data-calc-value="5">5</button><button type="button" data-calc-value="6">6</button><button type="button" data-calc-value="*">×</button>
+              <button type="button" data-calc-value="1">1</button><button type="button" data-calc-value="2">2</button><button type="button" data-calc-value="3">3</button><button type="button" data-calc-value="-">−</button>
+              <button type="button" data-calc-value="0">0</button><button type="button" data-calc-value=".">.</button><button type="button" data-calc-value="+">+</button><button type="button" data-calc-action="evaluate" class="calculator-equals">=</button>
+            </div>
+          </section>
+        </div>
+        <button class="quiet-button" id="shortcuts-button" type="button">Shortcuts <kbd>?</kbd></button>
+        <button class="export-all-button" id="export-all-button" type="button">Export page <kbd>⌥ E</kbd></button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="workspace" aria-labelledby="workspace-title">
+        <div class="workspace-heading">
+          <div>
+            <p class="eyebrow">Your notepad</p>
+            <h1 id="workspace-title">What are you working on?</h1>
+          </div>
+          <button class="clear-button" id="clear-button" type="button">Clear page</button>
+        </div>
+
+        <div class="composer-wrap">
+          <div class="mode-badge" id="mode-badge">READY</div>
+          <div class="notepad-toolbar" role="toolbar" aria-label="Notebook formatting and actions">
+            <div class="notation-tools" aria-label="Notation tools">
+              <button type="button" class="notation-button" data-format="subscript" aria-label="Toggle subscript" aria-pressed="false" title="Subscript">
+                <span class="notation-label">Subscript</span><span class="notation-example">x<sub>2</sub></span>
+              </button>
+              <button type="button" class="notation-button" data-format="superscript" aria-label="Toggle superscript" aria-pressed="false" title="Superscript">
+                <span class="notation-label">Superscript</span><span class="notation-example">x<sup>2</sup></span>
+              </button>
+              <button type="button" class="notation-button strike-button" id="strike-button" aria-label="Cross out the selected writing" title="Cross out the selected writing — crossed-out text is dropped from the next step">
+                <span class="notation-label">Cross out</span><span class="notation-example strike-example">ab</span>
+              </button>
+              <button type="button" class="notation-button undo-button" id="undo-button" aria-label="Undo the last change (Ctrl + Z)" title="Undo the last change (Ctrl + Z)" disabled>
+                <span class="notation-label">Undo</span><span class="notation-example">&#8630;</span>
+              </button>
+              <div class="highlight-group">
+                <button type="button" class="notation-button highlight-button" id="highlight-button" aria-label="Highlight selected writing" title="Highlight selected writing">
+                  <span class="notation-label">Highlight</span><span class="notation-example highlight-swatch">a</span>
+                </button>
+                <button type="button" class="highlight-more" id="highlight-more" aria-label="Choose a highlight colour" aria-expanded="false" aria-controls="highlight-menu" title="Choose a highlight colour">▾</button>
+                <div class="highlight-menu" id="highlight-menu" role="menu" aria-label="Highlight colours" hidden>
+                  <div class="highlight-swatches">
+                    <button type="button" role="menuitemradio" data-highlight="yellow" aria-pressed="false" aria-label="Yellow highlight" title="Yellow"><span></span></button>
+                    <button type="button" role="menuitemradio" data-highlight="green" aria-pressed="false" aria-label="Green highlight" title="Green"><span></span></button>
+                    <button type="button" role="menuitemradio" data-highlight="pink" aria-pressed="false" aria-label="Pink highlight" title="Pink"><span></span></button>
+                    <button type="button" role="menuitemradio" data-highlight="blue" aria-pressed="false" aria-label="Blue highlight" title="Blue"><span></span></button>
+                  </div>
+                  <button type="button" class="highlight-clear" id="highlight-clear" role="menuitem">Remove highlight</button>
+                </div>
+              </div>
+              <button type="button" class="notation-button lewis-button" id="lewis-button" aria-label="Draw a Lewis dot diagram (Alt + L)" title="Draw a Lewis dot diagram (Alt + L)">
+                <span class="notation-label">Lewis dots</span>
+                <svg class="lewis-icon" viewBox="0 0 24 24" aria-hidden="true"><text x="12" y="12" text-anchor="middle" dominant-baseline="central" font-family="Georgia,serif" font-size="13">O</text><circle cx="9.6" cy="3.2" r="1.25"/><circle cx="14.4" cy="3.2" r="1.25"/><circle cx="9.6" cy="20.8" r="1.25"/><circle cx="14.4" cy="20.8" r="1.25"/><circle cx="2.6" cy="12" r="1.25"/><circle cx="21.4" cy="12" r="1.25"/></svg>
+              </button>
+              <button type="button" class="paste-question-button" id="paste-question-button" title="Paste a conversion question (Alt + V)">Paste a question <kbd>Alt V</kbd></button>
+            </div>
+            <span class="draft-status" id="draft-status" role="status" aria-live="polite">Saved locally</span>
+            <div class="notepad-actions">
+              <button
+                type="button"
+                class="next-step-button"
+                id="next-step-button"
+                title="Duplicate this as the next editable step (Alt + Enter)"
+              >Next step</button>
+              <button type="button" class="save-note-button" id="save-note-button">Save note</button>
+            </div>
+          </div>
+          <div class="work-steps" id="work-steps" aria-label="Completed work steps"></div>
+          <div class="active-work-step">
+            <div class="active-step-heading">
+              <span class="active-step-label"><span id="active-step-number">Step 01</span> <strong id="active-step-state">Editing</strong></span>
+              <span class="active-step-tools">
+                <button type="button" class="step-tool-button" id="latest-step-button" title="Go back to the latest step (Alt + Down moves one step)" hidden>Back to latest</button>
+                <button type="button" class="step-tool-button step-delete-button" id="delete-step-button" title="Delete this step and go back to the previous one (Undo brings it back)">Delete step</button>
+              </span>
+            </div>
+            <div
+              id="command-input"
+              class="notepad-editor"
+              contenteditable="true"
+              role="textbox"
+              aria-label="Current editable chemistry step"
+              aria-multiline="true"
+              autocapitalize="off"
+              spellcheck="false"
+              data-placeholder="Write a note or try: balance Fe + O2 -> Fe2O3…"
+            ></div>
+          </div>
+          <div class="work-steps" id="work-steps-after" aria-label="Later work steps"></div>
+        </div>
+
+        <section class="results" id="results" aria-live="polite" aria-label="Scratchpad results"></section>
+      </section>
+
+      <aside class="reference-panel" aria-label="Chemistry reference">
+        <button
+          class="reference-toggle"
+          id="reference-toggle"
+          type="button"
+          aria-controls="reference-content"
+          aria-expanded="true"
+          aria-label="Hide reference shelf"
+          title="Hide reference shelf (Alt+R)"
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6"></path></svg>
+        </button>
+        <div class="reference-sticky" id="reference-content">
+          <div class="reference-tabs" role="tablist" aria-label="Chemistry references">
+            <button id="elements-tab" role="tab" aria-selected="true" aria-controls="elements-panel">Elements <kbd>⌥ P</kbd></button>
+            <button id="ions-tab" role="tab" aria-selected="false" aria-controls="ions-panel">Ions <kbd>⌥ I</kbd></button>
+            <button id="guide-tab" role="tab" aria-selected="false" aria-controls="guide-panel">Course guide <kbd>⌥ G</kbd></button>
+            <button id="prefixes-tab" role="tab" aria-selected="false" aria-controls="prefixes-panel">Prefixes <kbd>⌥ M</kbd></button>
+          </div>
+
+          <label class="search-field">
+            <span class="sr-only">Search reference</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+            <input id="reference-search" name="reference-search" type="search" autocomplete="off" placeholder="Search name, symbol, or charge…" />
+            <kbd>/</kbd>
+          </label>
+
+          <div id="elements-panel" role="tabpanel" aria-labelledby="elements-tab">
+            <div class="element-detail" id="element-detail" aria-live="polite">
+              <button type="button" class="element-tile-preview" title="Click to copy atomic mass 12.011" aria-label="Copy Carbon atomic mass, 12.011">
+                <span>6</span><em class="tile-charge"></em><strong>C</strong><small>12.011</small>
+              </button>
+              <div>
+                <p class="detail-kicker">Selected element</p>
+                <h3>Carbon</h3>
+                <p>Nonmetal · period 2 · group 14</p>
+              </div>
+            </div>
+            <div class="periodic-wrap" aria-label="Full periodic table">
+              <div class="periodic-table" id="periodic-table" role="grid" aria-label="Periodic table of elements"></div>
+            </div>
+            <div class="element-search-results" id="element-search-results"></div>
+            <div class="legend" aria-label="Element category legend">
+              <span><i class="cat-nonmetal"></i>Nonmetal</span>
+              <span><i class="cat-noble"></i>Noble gas</span>
+              <span><i class="cat-alkali"></i>Alkali metal</span>
+              <span><i class="cat-transition"></i>Transition</span>
+              <span><i class="cat-metalloid"></i>Metalloid</span>
+              <span><i class="stair-key"></i>Metal / nonmetal line</span>
+            </div>
+          </div>
+
+          <div id="ions-panel" role="tabpanel" aria-labelledby="ions-tab" hidden>
+            <div class="ions-list" id="ions-list"></div>
+          </div>
+
+          <div id="guide-panel" role="tabpanel" aria-labelledby="guide-tab" hidden>
+            <div class="course-guide" id="course-guide"></div>
+          </div>
+
+          <div id="prefixes-panel" role="tabpanel" aria-labelledby="prefixes-tab" hidden>
+            <p class="prefix-intro">Metric prefixes. Click one to drop its symbol into your notepad.</p>
+            <div class="prefix-table" id="prefix-list"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <aside class="saved-work-drawer" id="saved-work-drawer" aria-label="Saved notes" hidden>
+      <div class="saved-work-drawer-heading">
+        <div><p class="eyebrow">Your notepad</p><h2>Saved notes</h2></div>
+        <button type="button" id="saved-work-close" aria-label="Close saved notes">×</button>
+      </div>
+      <p class="saved-work-intro">Search anything you remember from the question, working, or answer.</p>
+      <label class="saved-work-search">
+        <span class="sr-only">Search saved notes</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+        <input id="saved-work-search" type="search" autocomplete="off" spellcheck="false" placeholder="Try 1.73, 38.8, or STP…" />
+      </label>
+      <p class="saved-work-count" id="saved-work-count" aria-live="polite"></p>
+      <div class="saved-work-list" id="saved-work-list"></div>
+    </aside>
+
+    <dialog id="shortcuts-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Keyboard</p>
+            <h2>Shortcuts</h2>
+          </div>
+          <button class="close-button" value="close" aria-label="Close shortcuts">×</button>
+        </div>
+        <dl class="shortcut-list">
+          <div><dt><kbd>Enter</kbd></dt><dd>Add a new line</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>Enter</kbd></dt><dd>Copy this step down into a new one you can keep writing (on an earlier step, inserts it right after)</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>↑</kbd> / <kbd>↓</kbd></dt><dd>Move to the previous or next step to edit it</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>C</kbd></dt><dd>Focus the quick calculator</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>V</kbd></dt><dd>Paste a conversion question into a stacked starting fraction</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>L</kbd></dt><dd>Draw a Lewis dot diagram; click one in your work to edit it</dd></div>
+          <div><dt><kbd>/</kbd></dt><dd>Make a stacked fraction from the text before it</dd></div>
+          <div><dt><kbd>Tab</kbd> or <kbd>→</kbd></dt><dd>Leave the denominator and keep writing</dd></div>
+          <div><dt><kbd>*</kbd></dt><dd>Leave the fraction and start the next factor</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>P</kbd></dt><dd>Open the periodic table</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>I</kbd></dt><dd>Open polyatomic ions</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>G</kbd></dt><dd>Open the course guide and formulas</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>M</kbd></dt><dd>Open the metric prefixes</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>R</kbd></dt><dd>Hide or show the reference shelf</dd></div>
+          <div><dt><kbd>Alt</kbd> + <kbd>E</kbd></dt><dd>Export the full page as PNG</dd></div>
+          <div><dt><kbd>/</kbd></dt><dd>Outside the notepad, search the open reference</dd></div>
+          <div><dt><kbd>Esc</kbd></dt><dd>Return to the notepad</dd></div>
+        </dl>
+        <p class="dialog-note">Tip: type <code>help</code> on the page at any time.</p>
+      </form>
+    </dialog>
+
+    <dialog id="paste-question-dialog">
+      <form method="dialog" class="paste-question-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Paste a question</p>
+            <h2>Paste the question</h2>
+          </div>
+          <button class="close-button" value="close" aria-label="Close paste question">×</button>
+        </div>
+        <label for="paste-question-input">For example: <code>1.7 pm = ? Tm</code></label>
+        <textarea id="paste-question-input" rows="3" spellcheck="false" placeholder="Paste a conversion question here"></textarea>
+        <p class="dialog-note">This creates a real stacked starting fraction: <strong>1.7 pm</strong> over <strong>1</strong>, followed by <strong>→ ? Tm</strong>.</p>
+        <button type="button" class="build-question-button" id="build-question-button">Add it to the notepad</button>
+      </form>
+    </dialog>
+
+    <dialog id="lewis-dialog" class="lewis-dialog" aria-labelledby="lewis-title">
+      <form method="dialog" class="lewis-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Lewis dot diagram</p>
+            <h2 id="lewis-title">Draw a Lewis structure</h2>
+          </div>
+          <button class="close-button" value="close" aria-label="Close Lewis diagram">×</button>
+        </div>
+        <div class="lewis-layout">
+          <div class="lewis-canvas">
+            <svg id="lewis-grid" class="lewis-grid" tabindex="0" role="application" aria-label="Lewis diagram grid. Arrow keys move, type a symbol to place an atom, Shift plus an arrow cycles a bond, Alt plus an arrow cycles dots." aria-describedby="lewis-status"></svg>
+            <p class="lewis-status" id="lewis-status" aria-live="polite"></p>
+          </div>
+          <div class="lewis-panel">
+            <section class="lewis-section" aria-labelledby="lewis-element-heading">
+              <h3 id="lewis-element-heading">Element to place</h3>
+              <div class="lewis-elements" id="lewis-elements"></div>
+              <label class="lewis-other">Other symbol <input id="lewis-element-input" type="text" maxlength="2" autocomplete="off" spellcheck="false" placeholder="Xe" /></label>
+            </section>
+            <section class="lewis-section" aria-labelledby="lewis-atom-heading">
+              <h3 id="lewis-atom-heading">Selected atom <strong id="lewis-atom-name">None</strong></h3>
+              <div class="lewis-row">
+                <span>Charge</span>
+                <span class="lewis-stepper">
+                  <button type="button" data-lewis-charge="-1" aria-label="Lower the selected atom's charge">−</button>
+                  <output id="lewis-atom-charge">0</output>
+                  <button type="button" data-lewis-charge="1" aria-label="Raise the selected atom's charge">+</button>
+                </span>
+              </div>
+              <div class="lewis-row lewis-row-buttons">
+                <button type="button" class="lewis-chip-button" id="lewis-brackets" aria-pressed="false">[ ] Brackets</button>
+                <button type="button" class="lewis-chip-button lewis-remove" id="lewis-remove">Remove</button>
+              </div>
+            </section>
+            <section class="lewis-section" aria-labelledby="lewis-ion-heading">
+              <h3 id="lewis-ion-heading">Whole ion</h3>
+              <div class="lewis-row">
+                <span>Charge</span>
+                <span class="lewis-stepper">
+                  <button type="button" data-lewis-ion="-1" aria-label="Lower the whole ion's charge">−</button>
+                  <output id="lewis-ion-charge">0</output>
+                  <button type="button" data-lewis-ion="1" aria-label="Raise the whole ion's charge">+</button>
+                </span>
+              </div>
+            </section>
+            <label class="lewis-auto"><input type="checkbox" id="lewis-auto" checked /> Fill in dots automatically</label>
+            <div class="lewis-row lewis-row-buttons">
+              <button type="button" class="lewis-chip-button" id="lewis-undo">Undo</button>
+              <button type="button" class="lewis-chip-button" id="lewis-clear">Clear</button>
+            </div>
+          </div>
+        </div>
+        <div class="lewis-footer">
+          <p class="lewis-keys">Arrows move · type a symbol · <kbd>Shift</kbd>+arrow bond · <kbd>Alt</kbd>+arrow dots · <kbd>+</kbd> <kbd>−</kbd> charge · <kbd>Del</kbd> removes · <kbd>Enter</kbd> adds</p>
+          <button type="button" class="build-question-button lewis-insert" id="lewis-insert">Add to notepad</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="cloud-sync-dialog">
+      <form method="dialog" class="cloud-sync-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Your notepad elsewhere</p>
+            <h2>Open this notepad on another device</h2>
+          </div>
+          <button class="close-button" value="close" aria-label="Close cloud sync">×</button>
+        </div>
+        <p id="cloud-sync-status">Preparing your private cloud notepad…</p>
+        <label for="cloud-sync-code">Your sync code <span>Keep this private.</span></label>
+        <textarea id="cloud-sync-code" rows="3" readonly spellcheck="false"></textarea>
+        <button type="button" class="build-question-button" id="cloud-copy-code">Copy sync code</button>
+        <label for="cloud-restore-code">On another device, paste your code here</label>
+        <textarea id="cloud-restore-code" rows="3" spellcheck="false" placeholder="Paste your sync code"></textarea>
+        <button type="button" class="save-note-button" id="cloud-restore-button">Open my notepad</button>
+        <p class="dialog-note">No account or password is needed. The sync code is the private key to this notepad, so do not share it.</p>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-copy">
+      <form>
+        <p class="eyebrow" id="confirm-dialog-eyebrow">Notepad</p>
+        <h2 id="confirm-dialog-title"></h2>
+        <p id="confirm-dialog-copy"></p>
+        <div class="confirm-dialog-actions">
+          <button type="button" class="confirm-cancel-button" id="confirm-dialog-cancel">Keep it</button>
+          <button type="button" class="confirm-action-button" id="confirm-dialog-action">Confirm</button>
+        </div>
+      </form>
+    </dialog>
+
+    <template id="result-template">
+      <article class="result-card">
+        <div class="result-meta">
+          <span class="result-number"></span>
+          <span class="result-kind"></span>
+          <time></time>
+        </div>
+        <div class="result-content"></div>
+        <div class="result-actions">
+          <button type="button" data-action="edit">Edit</button>
+          <button type="button" data-action="copy">Copy</button>
+          <button type="button" data-action="export">PNG</button>
+          <button type="button" data-action="remove" aria-label="Remove result">Remove</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="lewis.js?v=20261017-01"></script>
+    <script src="app.js?v=20261017-01"></script>
+  </body>
+</html>
