@@ -6,7 +6,10 @@
 // Model: { f, q, atoms: [{ x, y, s, q, d, w }], bonds: [[a, b, order]] }
 //   f     formula typed by the student      q (top level)  whole-ion charge
 //   x, y  atom centre in grid units (whole numbers until a bond angle is typed)
-//   s     element symbol      q  atom charge      w  brackets around this atom
+//   s     element symbol      q  atom charge
+//   w     brackets: around the whole bonded structure this atom belongs to
+//         (a charged structure of two or more atoms is always bracketed, and
+//         the structure's net charge is written outside the brackets)
 //   d     dots per side [top, right, bottom, left], 0-2 each
 //   bonds atom indexes and bond order 1-3
 // Older diagrams stored bonds as r/b (to the atom on the right / below); they are
@@ -105,6 +108,37 @@ function lewisSideOfDirection(degrees) {
 function lewisBondedSides(model, i) {
   const atom = model.atoms[i];
   return new Set(lewisBondsOf(model, i).map(({ other }) => lewisSideOfDirection(lewisDirection(atom, model.atoms[other]))));
+}
+
+// Atoms joined by bonds, as lists of indexes: each one is a molecule or ion.
+function lewisGroups(model) {
+  const seen = new Set();
+  const groups = [];
+  model.atoms.forEach((_, start) => {
+    if (seen.has(start)) return;
+    const group = [];
+    const queue = [start];
+    seen.add(start);
+    while (queue.length) {
+      const i = queue.pop();
+      group.push(i);
+      lewisBondsOf(model, i).forEach(({ other }) => {
+        if (!seen.has(other)) { seen.add(other); queue.push(other); }
+      });
+    }
+    groups.push(group);
+  });
+  return groups;
+}
+
+function lewisGroupOf(model, i) {
+  return lewisGroups(model).find(group => group.includes(i)) || [i];
+}
+
+// A structure gets brackets around all of it when any of its atoms asks for them,
+// and always when it is a charged polyatomic ion; its charge goes outside them.
+function lewisGroupBracketed(model, group) {
+  return group.some(i => model.atoms[i].w) || (group.length > 1 && group.some(i => model.atoms[i].q));
 }
 
 // Nearest atom to a point within reach, or -1.
@@ -300,6 +334,8 @@ function lewisGeometry(model) {
     shapes.push({ type: 'path', points: [[right - tick, top], [right, top], [right, bottom], [right - tick, bottom]] });
     grow(left - 0.04, top - 0.04, right + 0.04, bottom + 0.04);
   };
+  const bracketedGroups = lewisGroups(model).filter(group => lewisGroupBracketed(model, group));
+  const bracketedAtoms = new Set(bracketedGroups.flat());
 
   model.atoms.forEach((atom, i) => {
     const { x, y, s } = atom;
@@ -320,13 +356,28 @@ function lewisGeometry(model) {
       });
     });
 
-    if (atom.w) bracket(x - 0.44, y - 0.43, x + 0.44, y + 0.43);
+    // An unbracketed atom (Na+ beside [Cl]-) carries its own charge.
     const charge = lewisChargeText(atom.q);
-    if (charge) {
-      const cx = atom.w ? x + 0.5 : x + half + 0.12;
-      const cy = atom.w ? y - 0.37 : y - 0.3;
+    if (charge && !bracketedAtoms.has(i)) {
+      const cx = x + half + 0.12;
+      const cy = y - 0.3;
       shapes.push({ type: 'text', x: cx, y: cy, size: 0.27, value: charge, anchor: 'start' });
       grow(cx, cy - 0.16, cx + 0.17 * charge.length, cy + 0.16);
+    }
+  });
+
+  // Brackets around each bracketed structure as a whole, its net charge outside.
+  bracketedGroups.forEach(group => {
+    const atoms = group.map(i => model.atoms[i]);
+    const left = Math.min(...atoms.map(atom => atom.x)) - 0.46;
+    const right = Math.max(...atoms.map(atom => atom.x)) + 0.46;
+    const top = Math.min(...atoms.map(atom => atom.y)) - 0.45;
+    const bottom = Math.max(...atoms.map(atom => atom.y)) + 0.45;
+    bracket(left, top, right, bottom);
+    const net = lewisChargeText(atoms.reduce((sum, atom) => sum + atom.q, 0));
+    if (net) {
+      shapes.push({ type: 'text', x: right + 0.07, y: top + 0.04, size: 0.3, value: net, anchor: 'start' });
+      grow(right, top - 0.14, right + 0.07 + 0.19 * net.length, top + 0.2);
     }
   });
 
@@ -595,10 +646,6 @@ function lewisChangeAtomCharge(delta) {
   lewisSay(atom.q ? `${atom.s} charge ${lewisChargeText(atom.q)}` : `${atom.s} is neutral`);
 }
 
-function lewisChangeIonCharge(delta) {
-  lewisMutate(() => { lewis.model.q = Math.max(-4, Math.min(4, lewis.model.q + delta)); });
-  lewisSay(lewis.model.q ? `Whole ion ${lewisChargeText(lewis.model.q)}, bracketed` : 'Whole structure is neutral');
-}
 
 function lewisFormatAngle(degrees) {
   return String(Math.round(degrees * 10) / 10);
@@ -775,8 +822,12 @@ function renderLewisPanel() {
   $('#lewis-atom-name').textContent = atom ? lewisName(i) : 'None';
   $('#lewis-atom-charge').textContent = atom ? (lewisChargeText(atom.q) || '0') : '0';
   $$('[data-lewis-charge], #lewis-brackets, #lewis-remove').forEach(button => { button.disabled = !atom; });
-  $('#lewis-brackets').setAttribute('aria-pressed', String(Boolean(atom?.w)));
-  $('#lewis-ion-charge').textContent = lewisChargeText(lewis.model.q) || '0';
+  const group = atom ? lewisGroupOf(lewis.model, i) : [];
+  const forced = group.length > 1 && group.some(j => lewis.model.atoms[j].q);
+  const brackets = $('#lewis-brackets');
+  brackets.setAttribute('aria-pressed', String(Boolean(atom) && lewisGroupBracketed(lewis.model, group)));
+  if (forced) brackets.disabled = true;
+  brackets.title = forced ? 'A charged structure is always bracketed' : 'Brackets around the whole structure this atom is part of';
   $('#lewis-undo').disabled = !lewis.history.length;
   $('#lewis-insert').textContent = lewis.target ? 'Update diagram' : 'Add to notepad';
   $('#lewis-insert').disabled = !lewis.model.atoms.length;
@@ -854,7 +905,14 @@ function openLewisEditor(target = null) {
   const offsetX = Math.floor((lewis.cols - width) / 2);
   const offsetY = Math.floor((lewis.rows - height) / 2);
   atoms.forEach(atom => { atom.x += offsetX; atom.y += offsetY; });
-  lewis.model = { f: existing?.f || '', q: existing?.q || 0, atoms, bonds: existing?.bonds || [] };
+  lewis.model = { f: existing?.f || '', q: 0, atoms, bonds: existing?.bonds || [] };
+  // Older diagrams kept an ion's charge on the whole drawing; it now lives on an
+  // atom of the bracketed structure (drawn the same way: outside the brackets).
+  if (existing?.q && atoms.length) {
+    const group = lewisGroupOf(lewis.model, 0);
+    atoms[0].q = Math.max(-4, Math.min(4, atoms[0].q + existing.q));
+    group.forEach(j => { atoms[j].w = 1; });
+  }
   $('#lewis-formula').value = lewis.model.f;
   lewis.cursor = atoms[0] ? { x: Math.round(atoms[0].x), y: Math.round(atoms[0].y) } : { x: Math.floor(lewis.cols / 2), y: Math.floor((lewis.rows - 1) / 2) };
   lewis.target = target;
@@ -1043,12 +1101,13 @@ function initLewisEditor() {
     if (event.key === 'Enter') { event.preventDefault(); grid.focus(); }
   });
   $$('[data-lewis-charge]').forEach(button => button.addEventListener('click', () => lewisChangeAtomCharge(Number(button.dataset.lewisCharge))));
-  $$('[data-lewis-ion]').forEach(button => button.addEventListener('click', () => lewisChangeIonCharge(Number(button.dataset.lewisIon))));
   $('#lewis-brackets').addEventListener('click', () => {
-    const atom = lewis.model.atoms[lewisCursorAtom()];
-    if (!atom) return;
-    lewisMutate(() => { atom.w = atom.w ? 0 : 1; });
-    lewisSay(atom.w ? `Brackets around ${atom.s}` : 'Brackets removed');
+    const i = lewisCursorAtom();
+    if (i < 0) return;
+    const group = lewisGroupOf(lewis.model, i);
+    const on = !lewisGroupBracketed(lewis.model, group);
+    lewisMutate(() => group.forEach(j => { lewis.model.atoms[j].w = on ? 1 : 0; }));
+    lewisSay(on ? `Brackets around the whole ${group.length > 1 ? 'structure' : lewis.model.atoms[i].s}` : 'Brackets removed');
   });
   $('#lewis-remove').addEventListener('click', lewisRemoveAtCursor);
   $('#lewis-undo').addEventListener('click', lewisUndo);

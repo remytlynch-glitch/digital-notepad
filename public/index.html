@@ -7,7 +7,7 @@
     <meta name="description" content="A digital notepad for chemistry homework: write your working, balance equations, convert units, and keep every page." />
     <title>Digital Notepad — a notepad for chemistry homework</title>
     <link rel="icon" href="favicon.svg?v=1" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261017-05" />
+    <link rel="stylesheet" href="styles.css?v=20261017-06" />
   </head>
   <body>
     <a class="skip-link" href="#command-input">Skip to command input</a>
@@ -163,17 +163,6 @@
                     <button type="button" class="lewis-chip-button lewis-remove" id="lewis-remove">Remove</button>
                   </div>
                   <div class="lewis-bond-angles" id="lewis-bond-angles" hidden></div>
-                </section>
-                <section class="lewis-section" aria-labelledby="lewis-ion-heading">
-                  <h3 id="lewis-ion-heading">Whole ion</h3>
-                  <div class="lewis-row">
-                    <span>Charge</span>
-                    <span class="lewis-stepper">
-                      <button type="button" data-lewis-ion="-1" aria-label="Lower the whole ion's charge">−</button>
-                      <output id="lewis-ion-charge">0</output>
-                      <button type="button" data-lewis-ion="1" aria-label="Raise the whole ion's charge">+</button>
-                    </span>
-                  </div>
                 </section>
                 <div class="lewis-row lewis-row-buttons">
                   <button type="button" class="lewis-chip-button" id="lewis-undo">Undo</button>
@@ -374,7 +363,7 @@
       </article>
     </template>
 
-    <script src="lewis.js?v=20261017-05"></script>
-    <script src="app.js?v=20261017-05"></script>
+    <script src="lewis.js?v=20261017-06"></script>
+    <script src="app.js?v=20261017-06"></script>
   </body>
 </html>
