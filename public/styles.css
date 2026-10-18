@@ -1054,3 +1054,12 @@ dialog form { padding: 28px; }
   /* Keep the one action that matters in reach while scrolling the panel. */
   .lewis-footer { position: sticky; bottom: 0; z-index: 2; margin: 0 -12px -14px; padding: 10px 12px 12px; background: #fbf8ef; }
 }
+
+/* 2026-10-17: typed bond directions for the selected atom (no presets, by design) */
+.lewis-bond-angles { display: grid; gap: 6px; }
+.lewis-bond-angles[hidden] { display: none; }
+.lewis-angle-key { margin: 2px 0 0; color: var(--muted); font-size: .72rem; }
+.lewis-angle-row { display: grid; grid-template-columns: minmax(0, 1fr) 76px auto; align-items: center; gap: 6px; color: var(--ink); font-family: Georgia, serif; font-size: .95rem; }
+.lewis-angle-row input { width: 100%; height: 30px; padding: 0 8px; border: 1px solid var(--ink); color: var(--ink); background: #fffdf5; font-family: "Cascadia Code", Consolas, monospace; font-size: .85rem; text-align: right; }
+.lewis-angle-row input:focus-visible { outline: 3px solid var(--acid); outline-offset: 1px; }
+.lewis-angle-row b { font-weight: 400; }

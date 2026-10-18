@@ -1,18 +1,24 @@
-// Lewis dot diagrams. They are drawn on a grid in a dialog and stored in the notepad
-// as <span class="lewis-diagram" data-lewis="{json}"> holding a rendered SVG image.
-// The JSON is the source of truth: the sanitizer re-renders the image from it, and
-// the PNG export draws the same geometry straight onto its canvas.
+// Lewis dot diagrams. They are drawn on a grid in "Lewis mode" and stored in the
+// notepad as <span class="lewis-diagram" data-lewis="{json}"> holding a rendered
+// SVG image. The JSON is the source of truth: the sanitizer re-renders the image
+// from it, and the PNG export draws the same geometry straight onto its canvas.
 //
-// Model: { f: formula typed by the student, q: whole-ion charge, atoms: [{ x, y, s, q, d, r, b, w }] }
-//   x, y  grid cell          s  element symbol      q  atom charge
+// Model: { f, q, atoms: [{ x, y, s, q, d, w }], bonds: [[a, b, order]] }
+//   f     formula typed by the student      q (top level)  whole-ion charge
+//   x, y  atom centre in grid units (whole numbers until a bond angle is typed)
+//   s     element symbol      q  atom charge      w  brackets around this atom
 //   d     dots per side [top, right, bottom, left], 0-2 each
-//   r, b  bond order to the atom on the right / below, 0-3
-//   w     brackets around this atom
-// Dots are only ever placed by hand: working them out is the homework.
+//   bonds atom indexes and bond order 1-3
+// Older diagrams stored bonds as r/b (to the atom on the right / below); they are
+// converted on read.
+//
+// Nothing here solves the homework: dots are only placed by hand, and bond angles
+// are whatever the student types (no presets). Placing an atom next to a nonmetal
+// only adds a single bond line, which the student can change.
 //
 // Loaded before app.js; everything here that touches ELEMENTS, $ or the editor runs
-// only after app.js has defined them. Drawing happens in "Lewis mode", which swaps
-// the writing area for the grid while the reference shelf stays open.
+// only after app.js has defined them. Lewis mode swaps the writing area for the
+// grid while the reference shelf stays open.
 
 const LEWIS_SIDES = ['t', 'r', 'b', 'l'];
 const LEWIS_SIDE_NAMES = { t: 'top', r: 'right', b: 'bottom', l: 'left' };
@@ -23,6 +29,8 @@ const LEWIS_EXPORT_UNIT = 64;
 const LEWIS_QUICK_ELEMENTS = ['H', 'C', 'N', 'O', 'F', 'Cl', 'Br', 'I', 'S', 'P', 'Na', 'K', 'Mg', 'Ca'];
 // Pauling values; only the order matters (element order in the text formula).
 const LEWIS_ELECTRONEGATIVITY = { F: 3.98, O: 3.44, Cl: 3.16, N: 3.04, Kr: 3, Br: 2.96, I: 2.66, Xe: 2.6, S: 2.58, C: 2.55, Se: 2.55, H: 2.2, P: 2.19, As: 2.18, Te: 2.1, B: 2.04, Si: 1.9 };
+// Two atoms this close (grid units) can be bonded by clicking between them.
+const LEWIS_BOND_REACH = 1.6;
 
 let lewisElementMap = null;
 function lewisElementInfo(symbol) {
@@ -50,38 +58,64 @@ function lewisBondCapacity(symbol) {
   return valence <= 4 ? valence : 8 - valence;
 }
 
-function lewisIndex(atoms) {
-  return new Map(atoms.map(atom => [`${atom.x},${atom.y}`, atom]));
+// ---------------------------------------------------------------------------
+// Model helpers. Atoms are referred to by index; bonds are [a, b, order].
+// ---------------------------------------------------------------------------
+
+function lewisDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function lewisAt(index, x, y) {
-  return index.get(`${x},${y}`) || null;
+// Direction from atom a to atom b in degrees: 0 = right, 90 = up, counter-clockwise.
+function lewisDirection(a, b) {
+  return (Math.atan2(-(b.y - a.y), b.x - a.x) * 180 / Math.PI + 360) % 360;
 }
 
-function lewisNeighbour(index, atom, side) {
-  const [dx, dy] = LEWIS_STEP[side];
-  return lewisAt(index, atom.x + dx, atom.y + dy);
+function lewisBondIndex(model, a, b) {
+  return model.bonds.findIndex(([p, q]) => (p === a && q === b) || (p === b && q === a));
 }
 
-function lewisBond(index, atom, side) {
-  const other = lewisNeighbour(index, atom, side);
-  if (!other) return 0;
-  if (side === 'r') return atom.r || 0;
-  if (side === 'b') return atom.b || 0;
-  return (side === 'l' ? other.r : other.b) || 0;
+function lewisBondOrder(model, a, b) {
+  const found = lewisBondIndex(model, a, b);
+  return found < 0 ? 0 : model.bonds[found][2];
 }
 
-function lewisSetBond(index, atom, side, order) {
-  const other = lewisNeighbour(index, atom, side);
-  if (!other) return;
-  if (side === 'r') atom.r = order;
-  else if (side === 'b') atom.b = order;
-  else if (side === 'l') other.r = order;
-  else other.b = order;
+function lewisSetBondOrder(model, a, b, order) {
+  const found = lewisBondIndex(model, a, b);
+  if (found >= 0 && !order) model.bonds.splice(found, 1);
+  else if (found >= 0) model.bonds[found][2] = order;
+  else if (order) model.bonds.push([a, b, order]);
 }
 
-function lewisBondSum(index, atom) {
-  return LEWIS_SIDES.reduce((sum, side) => sum + lewisBond(index, atom, side), 0);
+// [{ other, order }] for every bond on atom i.
+function lewisBondsOf(model, i) {
+  return model.bonds.filter(([a, b]) => a === i || b === i).map(([a, b, order]) => ({ other: a === i ? b : a, order }));
+}
+
+function lewisBondSum(model, i) {
+  return lewisBondsOf(model, i).reduce((sum, bond) => sum + bond.order, 0);
+}
+
+// The side of atom i a direction points at: right, top, left or bottom quarter.
+function lewisSideOfDirection(degrees) {
+  return ['r', 't', 'l', 'b'][Math.round(degrees / 90) % 4];
+}
+
+// Sides of atom i that a bond leaves from; dots are not drawn there.
+function lewisBondedSides(model, i) {
+  const atom = model.atoms[i];
+  return new Set(lewisBondsOf(model, i).map(({ other }) => lewisSideOfDirection(lewisDirection(atom, model.atoms[other]))));
+}
+
+// Nearest atom to a point within reach, or -1.
+function lewisAtomNear(model, x, y, reach = 0.45) {
+  let best = -1;
+  let bestDistance = reach;
+  model.atoms.forEach((atom, i) => {
+    const distance = Math.hypot(atom.x - x, atom.y - y);
+    if (distance < bestDistance) { best = i; bestDistance = distance; }
+  });
+  return best;
 }
 
 function lewisChargeText(charge) {
@@ -91,45 +125,62 @@ function lewisChargeText(charge) {
 }
 
 function lewisNewAtom(x, y, s) {
-  return { x, y, s, q: 0, d: [0, 0, 0, 0], r: 0, b: 0, w: 0 };
+  return { x, y, s, q: 0, d: [0, 0, 0, 0], w: 0 };
 }
 
-// Validates untrusted JSON (it comes back out of saved HTML) and shifts the drawing
-// so its top-left atom sits at 0,0.
+// Validates untrusted JSON (it comes back out of saved HTML), converts the old
+// r/b bond format, and shifts the drawing so its top-left atom sits at 0,0.
 function lewisNormalize(raw) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.atoms)) return null;
   const int = (value, min, max) => {
     const number = Math.round(Number(value));
     return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : 0;
   };
-  const seen = new Set();
+  const coordinate = value => {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(Math.min(60, Math.max(-60, number)) * 1000) / 1000 : 0;
+  };
   const atoms = [];
-  raw.atoms.slice(0, 80).forEach(atom => {
+  const kept = new Map();
+  raw.atoms.slice(0, 80).forEach((atom, rawIndex) => {
     const s = String(atom?.s || '');
     if (!lewisElementInfo(s)) return;
-    const x = int(atom.x, 0, 60);
-    const y = int(atom.y, 0, 60);
-    if (seen.has(`${x},${y}`)) return;
-    seen.add(`${x},${y}`);
-    atoms.push({
-      x, y, s,
-      q: int(atom.q, -4, 4),
-      d: LEWIS_SIDES.map((_, i) => int(atom.d?.[i], 0, 2)),
-      r: int(atom.r, 0, 3),
-      b: int(atom.b, 0, 3),
-      w: atom.w ? 1 : 0
-    });
+    const x = coordinate(atom.x);
+    const y = coordinate(atom.y);
+    if (atoms.some(other => Math.hypot(other.x - x, other.y - y) < 0.3)) return;
+    kept.set(rawIndex, atoms.length);
+    atoms.push({ x, y, s, q: int(atom.q, -4, 4), d: LEWIS_SIDES.map((_, i) => int(atom.d?.[i], 0, 2)), w: atom.w ? 1 : 0 });
   });
   if (!atoms.length) return null;
+
+  const model = { f: lewisCleanFormula(raw.f), q: int(raw.q, -4, 4), atoms, bonds: [] };
+  const addBond = (a, b, order) => {
+    if (a === undefined || b === undefined || a === b || !order) return;
+    if (lewisBondIndex(model, a, b) < 0) model.bonds.push([a, b, order]);
+  };
+  if (Array.isArray(raw.bonds)) {
+    raw.bonds.slice(0, 200).forEach(bond => {
+      if (Array.isArray(bond)) addBond(kept.get(int(bond[0], 0, 999)), kept.get(int(bond[1], 0, 999)), int(bond[2], 0, 3));
+    });
+  } else {
+    // Old format: r / b = bond order to the atom one square right / below.
+    const at = new Map();
+    raw.atoms.forEach((atom, rawIndex) => { if (kept.has(rawIndex)) at.set(`${coordinate(atom.x)},${coordinate(atom.y)}`, rawIndex); });
+    raw.atoms.forEach((atom, rawIndex) => {
+      if (!kept.has(rawIndex)) return;
+      const x = coordinate(atom.x);
+      const y = coordinate(atom.y);
+      addBond(kept.get(rawIndex), kept.get(at.get(`${x + 1},${y}`)), int(atom.r, 0, 3));
+      addBond(kept.get(rawIndex), kept.get(at.get(`${x},${y + 1}`)), int(atom.b, 0, 3));
+    });
+  }
   const minX = Math.min(...atoms.map(atom => atom.x));
   const minY = Math.min(...atoms.map(atom => atom.y));
-  atoms.forEach(atom => { atom.x -= minX; atom.y -= minY; });
-  const index = lewisIndex(atoms);
   atoms.forEach(atom => {
-    if (!lewisNeighbour(index, atom, 'r')) atom.r = 0;
-    if (!lewisNeighbour(index, atom, 'b')) atom.b = 0;
+    atom.x = Math.round((atom.x - minX) * 1000) / 1000;
+    atom.y = Math.round((atom.y - minY) * 1000) / 1000;
   });
-  return { f: lewisCleanFormula(raw.f), q: int(raw.q, -4, 4), atoms };
+  return model;
 }
 
 function lewisCleanFormula(value) {
@@ -193,29 +244,27 @@ function lewisSerialize(model) {
   return JSON.stringify({
     f: model.f || undefined,
     q: model.q || undefined,
-    atoms: model.atoms.map(({ x, y, s, q, d, r, b, w }) => {
+    atoms: model.atoms.map(({ x, y, s, q, d, w }) => {
       const atom = { x, y, s };
       if (q) atom.q = q;
       if (d.some(Boolean)) atom.d = d;
-      if (r) atom.r = r;
-      if (b) atom.b = b;
       if (w) atom.w = 1;
       return atom;
-    })
+    }),
+    bonds: model.bonds.length ? model.bonds : undefined
   });
 }
 
-// A readable formula for copy, search and alt text: H first when it is bonded to
-// O, S or a halogen (H2O, HCl), otherwise last (CH4, NH3); the rest by
-// electronegativity, so NaCl and CO2 come out the way they are written.
+// A readable formula for copy, search and alt text when none was typed: H first
+// when it is bonded to O, S or a halogen (H2O, HCl), otherwise last (CH4, NH3);
+// the rest by electronegativity, so NaCl and CO2 come out the way they are written.
 function lewisFormula(model) {
   if (model.f) return model.f;
   const counts = new Map();
   model.atoms.forEach(atom => counts.set(atom.s, (counts.get(atom.s) || 0) + 1));
-  const index = lewisIndex(model.atoms);
-  const hydrogenFirst = model.atoms.some(atom => atom.s === 'H' && LEWIS_SIDES.some(side => {
-    const other = lewisBond(index, atom, side) && lewisNeighbour(index, atom, side);
-    return other && (['O', 'S'].includes(other.s) || lewisElementInfo(other.s)?.category === 'halogen');
+  const hydrogenFirst = model.bonds.some(([a, b]) => [[a, b], [b, a]].some(([h, other]) => {
+    const partner = model.atoms[other].s;
+    return model.atoms[h].s === 'H' && (['O', 'S'].includes(partner) || lewisElementInfo(partner)?.category === 'halogen');
   }));
   const rank = symbol => symbol === 'H' ? (hydrogenFirst ? -1 : 99) : (LEWIS_ELECTRONEGATIVITY[symbol] ?? 1);
   const formula = [...counts].sort(([a], [b]) => rank(a) - rank(b)).map(([symbol, count]) => `${symbol}${count > 1 ? count : ''}`).join('');
@@ -227,12 +276,19 @@ function lewisHalfWidth(symbol) {
   return symbol.length > 1 ? 0.25 : 0.15;
 }
 
+// How far from an atom's centre a bond line starts when it leaves in direction
+// (ux, uy): an ellipse around the symbol, wider for two-letter symbols.
+function lewisBondGap(symbol, ux, uy) {
+  const rx = lewisHalfWidth(symbol) + 0.08;
+  const ry = 0.25;
+  return (rx * ry) / Math.hypot(ry * ux, rx * uy);
+}
+
 // Shapes in grid units with each atom's centre at (x, y): text, dots, lines and
 // bracket polylines. The SVG and canvas renderers below only translate these.
 function lewisGeometry(model) {
   const shapes = [];
   if (!model.atoms.length) return { shapes, minX: 0, minY: 0, maxX: 0, maxY: 0 };
-  const index = lewisIndex(model.atoms);
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const grow = (x1, y1, x2, y2) => {
     minX = Math.min(minX, x1); minY = Math.min(minY, y1);
@@ -245,31 +301,22 @@ function lewisGeometry(model) {
     grow(left - 0.04, top - 0.04, right + 0.04, bottom + 0.04);
   };
 
-  model.atoms.forEach(atom => {
+  model.atoms.forEach((atom, i) => {
     const { x, y, s } = atom;
     const half = lewisHalfWidth(s);
     shapes.push({ type: 'text', x, y, size: 0.46, value: s, anchor: 'middle' });
     grow(x - half - 0.16, y - 0.36, x + half + 0.16, y + 0.36);
 
-    LEWIS_SIDES.forEach((side, i) => {
-      const count = atom.d[i];
-      if (!count || lewisBond(index, atom, side)) return;
+    const bonded = lewisBondedSides(model, i);
+    LEWIS_SIDES.forEach((side, slot) => {
+      const count = atom.d[slot];
+      if (!count || bonded.has(side)) return;
       (count === 2 ? [-0.075, 0.075] : [0]).forEach(offset => {
         const point = side === 't' ? [x + offset, y - 0.31]
           : side === 'b' ? [x + offset, y + 0.31]
           : side === 'r' ? [x + half + 0.1, y + offset]
           : [x - half - 0.1, y + offset];
         shapes.push({ type: 'dot', x: point[0], y: point[1], r: 0.042 });
-      });
-    });
-
-    [['r', atom.r], ['b', atom.b]].forEach(([side, order]) => {
-      const other = order && lewisNeighbour(index, atom, side);
-      if (!other) return;
-      const offsets = order === 1 ? [0] : order === 2 ? [-0.06, 0.06] : [-0.1, 0, 0.1];
-      offsets.forEach(offset => {
-        if (side === 'r') shapes.push({ type: 'line', x1: x + half + 0.07, y1: y + offset, x2: other.x - lewisHalfWidth(other.s) - 0.07, y2: y + offset });
-        else shapes.push({ type: 'line', x1: x + offset, y1: y + 0.25, x2: x + offset, y2: other.y - 0.25 });
       });
     });
 
@@ -281,6 +328,28 @@ function lewisGeometry(model) {
       shapes.push({ type: 'text', x: cx, y: cy, size: 0.27, value: charge, anchor: 'start' });
       grow(cx, cy - 0.16, cx + 0.17 * charge.length, cy + 0.16);
     }
+  });
+
+  model.bonds.forEach(([a, b, order]) => {
+    const from = model.atoms[a];
+    const to = model.atoms[b];
+    const length = lewisDistance(from, to);
+    if (length < 0.01) return;
+    const ux = (to.x - from.x) / length;
+    const uy = (to.y - from.y) / length;
+    const startGap = lewisBondGap(from.s, ux, uy);
+    const endGap = lewisBondGap(to.s, ux, uy);
+    if (startGap + endGap >= length) return;
+    const offsets = order === 1 ? [0] : order === 2 ? [-0.06, 0.06] : [-0.1, 0, 0.1];
+    offsets.forEach(offset => {
+      const nx = -uy * offset;
+      const ny = ux * offset;
+      shapes.push({
+        type: 'line',
+        x1: from.x + ux * startGap + nx, y1: from.y + uy * startGap + ny,
+        x2: to.x - ux * endGap + nx, y2: to.y - uy * endGap + ny
+      });
+    });
   });
 
   const charge = lewisChargeText(model.q);
@@ -394,13 +463,14 @@ function drawLewis(ctx, model, x, centerY, unit = LEWIS_EXPORT_UNIT) {
 }
 
 // ---------------------------------------------------------------------------
-// The drawing dialog
+// Lewis mode (the drawing editor)
 // ---------------------------------------------------------------------------
 
 const lewis = {
-  model: { q: 0, atoms: [] },
+  model: { f: '', q: 0, atoms: [], bonds: [] },
   cols: 9,
   rows: 6,
+  // The keyboard cursor is a grid square; the selected atom is the one in it.
   cursor: { x: 4, y: 2 },
   element: 'C',
   target: null,
@@ -413,8 +483,10 @@ const lewis = {
   typedCell: ''
 };
 
+// The atom in the cursor's square: anywhere inside it, since a swung atom
+// rarely sits on a square's centre.
 function lewisCursorAtom() {
-  return lewisAt(lewisIndex(lewis.model.atoms), lewis.cursor.x, lewis.cursor.y);
+  return lewisAtomNear(lewis.model, lewis.cursor.x, lewis.cursor.y, 0.71);
 }
 
 function lewisMutate(change) {
@@ -438,59 +510,77 @@ function lewisSay(message) {
   $('#lewis-status').textContent = message;
 }
 
+function lewisName(i) {
+  return lewisElementInfo(lewis.model.atoms[i]?.s)?.name || '';
+}
+
 const LEWIS_DEFAULT_HINT = 'Click a square to place an atom. Click beside an atom to add dots, or between two atoms for a bond.';
 
 function lewisPlace(x, y, symbol) {
-  lewis.cursor = { x, y };
+  lewis.cursor = { x: Math.round(x), y: Math.round(y) };
+  const model = lewis.model;
+  const existing = lewisAtomNear(model, x, y, 0.5);
+  if (existing < 0 && lewisAtomNear(model, x, y, 0.75) >= 0) return lewisSay('Too close to another atom');
   lewisMutate(() => {
-    const index = lewisIndex(lewis.model.atoms);
-    const existing = lewisAt(index, x, y);
-    if (existing) { existing.s = symbol; return; }
-    const atom = lewisNewAtom(x, y, symbol);
-    lewis.model.atoms.push(atom);
-    index.set(`${x},${y}`, atom);
-    // Leftover bond flags from an atom that used to be here must not come back.
-    const left = lewisAt(index, x - 1, y); if (left) left.r = 0;
-    const above = lewisAt(index, x, y - 1); if (above) above.b = 0;
-    LEWIS_SIDES.forEach(side => {
-      const other = lewisNeighbour(index, atom, side);
-      if (!other) return;
-      if (lewisBondSum(index, atom) >= lewisBondCapacity(symbol)) return;
+    if (existing >= 0) { model.atoms[existing].s = symbol; return; }
+    model.atoms.push(lewisNewAtom(x, y, symbol));
+    const added = model.atoms.length - 1;
+    // A single bond line to touching nonmetals; the student changes it if needed.
+    model.atoms.forEach((other, i) => {
+      if (i === added || lewisDistance(other, model.atoms[added]) > 1.05) return;
+      if (lewisBondSum(model, added) >= lewisBondCapacity(symbol)) return;
       // The atom already there may go past its usual count (the fourth H on NH4+),
-      // up to a full octet of bonds; H never takes a second bond.
-      if (!lewisBondCapacity(other.s) || lewisBondSum(index, other) >= (other.s === 'H' ? 1 : 4)) return;
-      lewisSetBond(index, atom, side, 1);
+      // up to four bonds; H never takes a second bond.
+      if (!lewisBondCapacity(other.s) || lewisBondSum(model, i) >= (other.s === 'H' ? 1 : 4)) return;
+      lewisSetBondOrder(model, added, i, 1);
     });
   });
   lewisSay(`${lewisElementInfo(symbol).name} placed`);
 }
 
 function lewisRemoveAtCursor() {
-  const atom = lewisCursorAtom();
-  if (!atom) return lewisSay('That square is empty');
+  const index = lewisCursorAtom();
+  if (index < 0) return lewisSay('That square is empty');
+  const name = lewisName(index);
   lewisMutate(() => {
-    const index = lewisIndex(lewis.model.atoms);
-    const left = lewisAt(index, atom.x - 1, atom.y); if (left) left.r = 0;
-    const above = lewisAt(index, atom.x, atom.y - 1); if (above) above.b = 0;
-    lewis.model.atoms = lewis.model.atoms.filter(item => item !== atom);
+    const model = lewis.model;
+    model.atoms.splice(index, 1);
+    model.bonds = model.bonds
+      .filter(([a, b]) => a !== index && b !== index)
+      .map(([a, b, order]) => [a > index ? a - 1 : a, b > index ? b - 1 : b, order]);
   });
-  lewisSay(`${lewisElementInfo(atom.s).name} removed`);
+  lewisSay(`${name} removed`);
 }
 
 const LEWIS_BOND_NAMES = ['No bond', 'Single bond', 'Double bond', 'Triple bond'];
 
-function lewisCycleBond(atom, side) {
-  const index = lewisIndex(lewis.model.atoms);
-  if (!atom || !lewisNeighbour(index, atom, side)) return lewisSay(`No atom to the ${LEWIS_SIDE_NAMES[side]} to bond to`);
-  const next = (lewisBond(index, atom, side) + 1) % 4;
-  lewisMutate(() => lewisSetBond(lewisIndex(lewis.model.atoms), atom, side, next));
-  lewisSay(LEWIS_BOND_NAMES[next]);
+function lewisCycleBond(a, b) {
+  if (a < 0 || b < 0) return lewisSay('Point at the space between two atoms to bond them');
+  const next = (lewisBondOrder(lewis.model, a, b) + 1) % 4;
+  lewisMutate(() => lewisSetBondOrder(lewis.model, a, b, next));
+  lewisSay(`${LEWIS_BOND_NAMES[next]} between ${lewis.model.atoms[a].s} and ${lewis.model.atoms[b].s}`);
 }
 
-function lewisCycleDots(atom, side) {
-  if (!atom) return lewisSay('Place an atom first');
-  const index = lewisIndex(lewis.model.atoms);
-  if (lewisBond(index, atom, side)) return lewisSay(`That side is bonded; remove the bond to put dots there`);
+// The atom (within bonding reach) that an arrow key points at from atom i.
+function lewisNeighbourToward(i, side) {
+  const from = lewis.model.atoms[i];
+  const [dx, dy] = LEWIS_STEP[side];
+  const wanted = (Math.atan2(-dy, dx) * 180 / Math.PI + 360) % 360;
+  let best = -1;
+  let bestDistance = LEWIS_BOND_REACH;
+  lewis.model.atoms.forEach((atom, j) => {
+    if (j === i) return;
+    const distance = lewisDistance(from, atom);
+    const off = Math.abs(((lewisDirection(from, atom) - wanted) + 540) % 360 - 180);
+    if (off <= 50 && distance <= bestDistance) { best = j; bestDistance = distance; }
+  });
+  return best;
+}
+
+function lewisCycleDots(i, side) {
+  if (i < 0) return lewisSay('Place an atom first');
+  if (lewisBondedSides(lewis.model, i).has(side)) return lewisSay('A bond leaves from that side; remove it to put dots there');
+  const atom = lewis.model.atoms[i];
   const slot = LEWIS_SIDES.indexOf(side);
   const next = (atom.d[slot] + 1) % 3;
   lewisMutate(() => { atom.d[slot] = next; });
@@ -498,8 +588,9 @@ function lewisCycleDots(atom, side) {
 }
 
 function lewisChangeAtomCharge(delta) {
-  const atom = lewisCursorAtom();
-  if (!atom) return lewisSay('Select an atom to give it a charge');
+  const i = lewisCursorAtom();
+  if (i < 0) return lewisSay('Select an atom to give it a charge');
+  const atom = lewis.model.atoms[i];
   lewisMutate(() => { atom.q = Math.max(-4, Math.min(4, atom.q + delta)); });
   lewisSay(atom.q ? `${atom.s} charge ${lewisChargeText(atom.q)}` : `${atom.s} is neutral`);
 }
@@ -509,6 +600,57 @@ function lewisChangeIonCharge(delta) {
   lewisSay(lewis.model.q ? `Whole ion ${lewisChargeText(lewis.model.q)}, bracketed` : 'Whole structure is neutral');
 }
 
+function lewisFormatAngle(degrees) {
+  return String(Math.round(degrees * 10) / 10);
+}
+
+// Point the bond from atom pivot to atom other in the typed direction. The other
+// atom swings round the pivot at the same bond length, carrying everything bonded
+// beyond it (unless that loops back to the pivot, as in a ring).
+function lewisSetBondAngle(pivot, other, degrees) {
+  const model = lewis.model;
+  const centre = model.atoms[pivot];
+  const turn = (degrees - lewisDirection(centre, model.atoms[other])) * Math.PI / 180;
+  const moving = new Set([other]);
+  const queue = [other];
+  while (queue.length) {
+    const current = queue.pop();
+    lewisBondsOf(model, current).forEach(({ other: next }) => {
+      if (next !== pivot && !moving.has(next)) { moving.add(next); queue.push(next); }
+    });
+  }
+  const loopsBack = [...moving].some(i => i !== other && lewisBondOrder(model, i, pivot));
+  const swung = loopsBack ? [other] : [...moving];
+  lewisMutate(() => {
+    swung.forEach(i => {
+      const atom = model.atoms[i];
+      const dx = atom.x - centre.x;
+      const dy = -(atom.y - centre.y);
+      const rx = dx * Math.cos(turn) - dy * Math.sin(turn);
+      const ry = dx * Math.sin(turn) + dy * Math.cos(turn);
+      atom.x = Math.round((centre.x + rx) * 1000) / 1000;
+      atom.y = Math.round((centre.y - ry) * 1000) / 1000;
+    });
+    lewisFitGrid();
+  });
+  lewisSay(`Bond from ${centre.s} to ${model.atoms[other].s} now points at ${lewisFormatAngle(degrees)}°`);
+}
+
+// Grow the grid when a swung atom lands outside it; shift everything if it went
+// off the top or left.
+function lewisFitGrid() {
+  const atoms = lewis.model.atoms;
+  if (!atoms.length) return;
+  const shiftX = Math.max(0, Math.ceil(-Math.min(...atoms.map(atom => atom.x))));
+  const shiftY = Math.max(0, Math.ceil(-Math.min(...atoms.map(atom => atom.y))));
+  if (shiftX || shiftY) {
+    atoms.forEach(atom => { atom.x += shiftX; atom.y += shiftY; });
+    lewis.cursor = { x: lewis.cursor.x + shiftX, y: lewis.cursor.y + shiftY };
+  }
+  lewis.cols = Math.max(lewis.cols, Math.ceil(Math.max(...atoms.map(atom => atom.x)) + 1));
+  lewis.rows = Math.max(lewis.rows, Math.ceil(Math.max(...atoms.map(atom => atom.y)) + 1));
+}
+
 function lewisSetElement(symbol) {
   if (!lewisElementInfo(symbol)) return false;
   lewis.element = symbol;
@@ -516,37 +658,61 @@ function lewisSetElement(symbol) {
   return true;
 }
 
-// Where a pointer sits on the grid, and what clicking there would do.
+// Where a pointer sits on the grid, and what clicking there would do. Atom
+// coordinates put a square's centre at (column, row); the SVG draws them +0.5.
 function lewisHit(event) {
   const svg = $('#lewis-grid');
   const box = svg.getBoundingClientRect();
   const gx = (event.clientX - box.left) / box.width * lewis.cols;
   const gy = (event.clientY - box.top) / box.height * lewis.rows;
+  if (gx < 0 || gy < 0 || gx >= lewis.cols || gy >= lewis.rows) return null;
+  const px = gx - 0.5;
+  const py = gy - 0.5;
+  const model = lewis.model;
+
+  // Between two atoms in bonding reach: the bond.
+  let bond = null;
+  let bondDistance = 0.16;
+  model.atoms.forEach((a, i) => model.atoms.forEach((b, j) => {
+    if (j <= i) return;
+    const length = lewisDistance(a, b);
+    if (length > LEWIS_BOND_REACH || length < 0.01) return;
+    const t = ((px - a.x) * (b.x - a.x) + (py - a.y) * (b.y - a.y)) / (length * length);
+    if (t < 0.28 || t > 0.72) return;
+    const off = Math.abs((px - a.x) * (b.y - a.y) - (py - a.y) * (b.x - a.x)) / length;
+    if (off < bondDistance) { bond = { kind: 'bond', i, j }; bondDistance = off; }
+  }));
+  if (bond) return bond;
+
+  const i = lewisAtomNear(model, px, py, 0.5);
+  if (i >= 0) {
+    const atom = model.atoms[i];
+    const dx = px - atom.x;
+    const dy = py - atom.y;
+    if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return { kind: 'atom', i };
+    const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't');
+    return { kind: 'dots', i, side };
+  }
   const x = Math.floor(gx);
   const y = Math.floor(gy);
-  if (x < 0 || y < 0 || x >= lewis.cols || y >= lewis.rows) return null;
-  const index = lewisIndex(lewis.model.atoms);
-  const atom = lewisAt(index, x, y);
-  if (!atom) return { kind: 'place', x, y };
-  const dx = gx - x - 0.5;
-  const dy = gy - y - 0.5;
-  if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return { kind: 'atom', x, y, atom };
-  const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'r' : 'l') : (dy > 0 ? 'b' : 't');
-  const reach = Math.max(Math.abs(dx), Math.abs(dy));
-  if (lewisNeighbour(index, atom, side) && (reach > 0.33 || lewisBond(index, atom, side))) return { kind: 'bond', x, y, atom, side };
-  return { kind: 'dots', x, y, atom, side };
+  if (lewisAtomNear(model, x, y, 0.75) >= 0) return null;
+  return { kind: 'place', x, y };
+}
+
+function lewisSameHit(a, b) {
+  return Boolean(a && b) && ['kind', 'i', 'j', 'side', 'x', 'y'].every(key => a[key] === b[key]);
 }
 
 function lewisHitHint(hit) {
   if (!hit) return '';
-  const index = lewisIndex(lewis.model.atoms);
+  const model = lewis.model;
   if (hit.kind === 'place') return `Click to place ${lewisElementInfo(lewis.element).name}`;
-  if (hit.kind === 'atom') return `${lewisElementInfo(hit.atom.s).name}: click to select, then set its charge or brackets`;
+  if (hit.kind === 'atom') return `${lewisName(hit.i)}: click to select, then set its charge, brackets or bond angles`;
   if (hit.kind === 'bond') {
-    const next = (lewisBond(index, hit.atom, hit.side) + 1) % 4;
+    const next = (lewisBondOrder(model, hit.i, hit.j) + 1) % 4;
     return next ? `Click for a ${LEWIS_BOND_NAMES[next].toLowerCase()}` : 'Click to remove the bond';
   }
-  const next = (hit.atom.d[LEWIS_SIDES.indexOf(hit.side)] + 1) % 3;
+  const next = (model.atoms[hit.i].d[LEWIS_SIDES.indexOf(hit.side)] + 1) % 3;
   return `Click for ${['no dots', 'one dot', 'a pair'][next]} on the ${LEWIS_SIDE_NAMES[hit.side]}`;
 }
 
@@ -556,19 +722,27 @@ const LEWIS_GRID_UNIT = 100;
 
 function lewisHitZone(hit) {
   if (!hit) return '';
-  const { x, y } = hit;
   const g = value => Math.round(value * LEWIS_GRID_UNIT);
   const rect = (left, top, width, height, extra = '') => `<rect class="lewis-zone${extra}" x="${g(left)}" y="${g(top)}" width="${g(width)}" height="${g(height)}"/>`;
   if (hit.kind === 'place') {
+    const { x, y } = hit;
     return `${rect(x + 0.08, y + 0.08, 0.84, 0.84, ' is-place')}<text class="lewis-ghost" x="${g(x + 0.5)}" y="${g(y + 0.5)}" font-family="Georgia,serif" font-size="${g(0.46)}" text-anchor="middle" dominant-baseline="central">${lewis.element}</text>`;
   }
-  if (hit.kind === 'atom') return rect(x + 0.24, y + 0.24, 0.52, 0.52);
+  const atoms = lewis.model.atoms;
   if (hit.kind === 'bond') {
-    const [dx, dy] = LEWIS_STEP[hit.side];
-    const midX = x + 0.5 + dx * 0.5;
-    const midY = y + 0.5 + dy * 0.5;
-    return dx ? rect(midX - 0.34, midY - 0.13, 0.68, 0.26) : rect(midX - 0.13, midY - 0.34, 0.26, 0.68);
+    const a = atoms[hit.i];
+    const b = atoms[hit.j];
+    const length = lewisDistance(a, b);
+    const ux = (b.x - a.x) / length;
+    const uy = (b.y - a.y) / length;
+    const mx = (a.x + b.x) / 2 + 0.5;
+    const my = (a.y + b.y) / 2 + 0.5;
+    const corners = [[1, 1], [1, -1], [-1, -1], [-1, 1]].map(([along, across]) =>
+      `${g(mx + ux * 0.24 * along - uy * 0.13 * across)},${g(my + uy * 0.24 * along + ux * 0.13 * across)}`);
+    return `<polygon class="lewis-zone" points="${corners.join(' ')}"/>`;
   }
+  const { x, y } = atoms[hit.i];
+  if (hit.kind === 'atom') return rect(x + 0.24, y + 0.24, 0.52, 0.52);
   const zones = { t: [x + 0.3, y + 0.06, 0.4, 0.22], b: [x + 0.3, y + 0.72, 0.4, 0.22], l: [x + 0.06, y + 0.3, 0.22, 0.4], r: [x + 0.72, y + 0.3, 0.22, 0.4] };
   return rect(...zones[hit.side]);
 }
@@ -582,7 +756,10 @@ function renderLewisGrid() {
   for (let c = 1; c < cols; c += 1) markup += `<line class="lewis-cell-line" x1="${c * g}" y1="0" x2="${c * g}" y2="${rows * g}" vector-effect="non-scaling-stroke"/>`;
   for (let r = 1; r < rows; r += 1) markup += `<line class="lewis-cell-line" x1="0" y1="${r * g}" x2="${cols * g}" y2="${r * g}" vector-effect="non-scaling-stroke"/>`;
   markup += lewisHitZone(lewis.hover);
-  markup += `<rect class="lewis-cursor" x="${(cursor.x + 0.04) * g}" y="${(cursor.y + 0.04) * g}" width="${0.92 * g}" height="${0.92 * g}" vector-effect="non-scaling-stroke"/>`;
+  // The cursor sits on the selected atom (which may be off the squares once a bond
+  // angle is typed), or on the empty square.
+  const selected = lewis.model.atoms[lewisCursorAtom()] || cursor;
+  markup += `<rect class="lewis-cursor" x="${Math.round((selected.x + 0.04) * g)}" y="${Math.round((selected.y + 0.04) * g)}" width="${0.92 * g}" height="${0.92 * g}" vector-effect="non-scaling-stroke"/>`;
   markup += lewisShapesSVG(lewisGeometry(lewis.model).shapes, g, 0.5, 0.5);
   svg.innerHTML = markup;
 }
@@ -593,8 +770,9 @@ function renderLewisPanel() {
   $('#lewis-formula-preview').replaceChildren(...(lewis.model.f ? [lewisFormulaHTMLNode(lewis.model.f)] : []));
   const other = $('#lewis-element-input');
   if (document.activeElement !== other) other.value = LEWIS_QUICK_ELEMENTS.includes(lewis.element) ? '' : lewis.element;
-  const atom = lewisCursorAtom();
-  $('#lewis-atom-name').textContent = atom ? lewisElementInfo(atom.s).name : 'None';
+  const i = lewisCursorAtom();
+  const atom = lewis.model.atoms[i];
+  $('#lewis-atom-name').textContent = atom ? lewisName(i) : 'None';
   $('#lewis-atom-charge').textContent = atom ? (lewisChargeText(atom.q) || '0') : '0';
   $$('[data-lewis-charge], #lewis-brackets, #lewis-remove').forEach(button => { button.disabled = !atom; });
   $('#lewis-brackets').setAttribute('aria-pressed', String(Boolean(atom?.w)));
@@ -604,9 +782,44 @@ function renderLewisPanel() {
   $('#lewis-insert').disabled = !lewis.model.atoms.length;
 }
 
+const LEWIS_BOND_GLYPHS = ['', '—', '=', '≡'];
+
+// One box per bond on the selected atom: the direction it leaves in, typed by hand.
+function renderLewisAngles() {
+  const list = $('#lewis-bond-angles');
+  const focused = document.activeElement?.dataset?.bondAngle;
+  const i = lewisCursorAtom();
+  const bonds = i < 0 ? [] : lewisBondsOf(lewis.model, i);
+  list.hidden = !bonds.length;
+  list.innerHTML = bonds.length ? `<p class="lewis-angle-key">Bond directions: 0° points right, 90° up</p>${bonds.map(({ other, order }) => {
+    const label = `${lewis.model.atoms[i].s}${LEWIS_BOND_GLYPHS[order]}${lewis.model.atoms[other].s}`;
+    return `<label class="lewis-angle-row"><span>${label}</span><input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" data-bond-angle="${other}" value="${lewisFormatAngle(lewisDirection(lewis.model.atoms[i], lewis.model.atoms[other]))}" aria-label="Direction of the bond from ${lewisName(i)} to ${lewisName(other)}, in degrees" /><b>°</b></label>`;
+  }).join('')}` : '';
+  if (focused !== undefined) {
+    const again = list.querySelector(`[data-bond-angle="${focused}"]`);
+    if (again) { again.focus(); again.select(); }
+  }
+}
+
+function commitLewisAngle(field) {
+  const pivot = lewisCursorAtom();
+  const other = Number(field.dataset.bondAngle);
+  if (pivot < 0 || !lewis.model.atoms[other]) return;
+  const typed = Number(field.value.replace(/[°\s]/g, ''));
+  if (!field.value.trim() || !Number.isFinite(typed)) {
+    lewisSay('Type the direction as a number of degrees, like 30');
+    return renderLewisAngles();
+  }
+  const degrees = ((typed % 360) + 360) % 360;
+  const current = lewisDirection(lewis.model.atoms[pivot], lewis.model.atoms[other]);
+  if (Math.abs(degrees - current) < 0.05) return;
+  lewisSetBondAngle(pivot, other, degrees);
+}
+
 function renderLewisEditor() {
   renderLewisGrid();
   renderLewisPanel();
+  renderLewisAngles();
 }
 
 // Lewis mode takes the writing area's place inside the notepad card, so the
@@ -618,7 +831,7 @@ function lewisModeActive() {
 function exitLewisMode({ keepDraft = true } = {}) {
   if (!lewisModeActive()) return;
   if (keepDraft && !lewis.target && (lewis.model.atoms.length || lewis.model.f)) {
-    lewis.draft = lewisNormalize(lewis.model) || { f: lewisCleanFormula(lewis.model.f), q: 0, atoms: [] };
+    lewis.draft = lewisNormalize(lewis.model) || { f: lewisCleanFormula(lewis.model.f), q: 0, atoms: [], bonds: [] };
   }
   $('#lewis-mode').hidden = true;
   $('.composer-wrap').classList.remove('is-lewis-mode');
@@ -634,16 +847,16 @@ function openLewisEditor(target = null) {
   const existing = target ? lewisParse(target.getAttribute('data-lewis')) : (lewis.draft ? structuredClone(lewis.draft) : null);
   const narrow = matchMedia('(max-width: 560px)').matches;
   const atoms = existing?.atoms || [];
-  const width = atoms.length ? Math.max(...atoms.map(atom => atom.x)) + 1 : 0;
-  const height = atoms.length ? Math.max(...atoms.map(atom => atom.y)) + 1 : 0;
+  const width = atoms.length ? Math.ceil(Math.max(...atoms.map(atom => atom.x))) + 1 : 0;
+  const height = atoms.length ? Math.ceil(Math.max(...atoms.map(atom => atom.y))) + 1 : 0;
   lewis.cols = Math.max(narrow ? 6 : 9, width + 2);
   lewis.rows = Math.max(narrow ? 5 : 6, height + 2);
   const offsetX = Math.floor((lewis.cols - width) / 2);
   const offsetY = Math.floor((lewis.rows - height) / 2);
   atoms.forEach(atom => { atom.x += offsetX; atom.y += offsetY; });
-  lewis.model = { f: existing?.f || '', q: existing?.q || 0, atoms };
+  lewis.model = { f: existing?.f || '', q: existing?.q || 0, atoms, bonds: existing?.bonds || [] };
   $('#lewis-formula').value = lewis.model.f;
-  lewis.cursor = atoms[0] ? { x: atoms[0].x, y: atoms[0].y } : { x: Math.floor(lewis.cols / 2), y: Math.floor((lewis.rows - 1) / 2) };
+  lewis.cursor = atoms[0] ? { x: Math.round(atoms[0].x), y: Math.round(atoms[0].y) } : { x: Math.floor(lewis.cols / 2), y: Math.floor((lewis.rows - 1) / 2) };
   lewis.target = target;
   lewis.history = [];
   lewis.hover = null;
@@ -704,16 +917,19 @@ function lewisTypeLetter(letter) {
   const pair = previous ? `${previous}${letter.toLowerCase()}` : '';
   lewis.typedAt = now;
   lewis.typedCell = cell;
+  // On a swung atom, type over that atom rather than the square under it.
+  const here = lewis.model.atoms[lewisCursorAtom()];
+  const [x, y] = here ? [here.x, here.y] : [lewis.cursor.x, lewis.cursor.y];
   if (pair && lewisElementInfo(pair)) {
     lewis.typed = '';
     lewisSetElement(pair);
-    return lewisPlace(lewis.cursor.x, lewis.cursor.y, pair);
+    return lewisPlace(x, y, pair);
   }
   const single = letter.toUpperCase();
   lewis.typed = single;
   if (lewisElementInfo(single)) {
     lewisSetElement(single);
-    return lewisPlace(lewis.cursor.x, lewis.cursor.y, single);
+    return lewisPlace(x, y, single);
   }
   lewisSay(`${single}… type the second letter`);
 }
@@ -727,7 +943,12 @@ function lewisGridKeydown(event) {
     return lewisUndo();
   }
   if (event.ctrlKey || event.metaKey) return;
-  if (side && event.shiftKey) { event.preventDefault(); return lewisCycleBond(atom, side); }
+  if (side && event.shiftKey) {
+    event.preventDefault();
+    const other = atom < 0 ? -1 : lewisNeighbourToward(atom, side);
+    if (other < 0) return lewisSay(`No atom to the ${LEWIS_SIDE_NAMES[side]} to bond to`);
+    return lewisCycleBond(atom, other);
+  }
   if (side && event.altKey) { event.preventDefault(); return lewisCycleDots(atom, side); }
   if (side) {
     event.preventDefault();
@@ -739,7 +960,7 @@ function lewisGridKeydown(event) {
     lewis.typed = '';
     renderLewisEditor();
     const here = lewisCursorAtom();
-    return lewisSay(here ? `${lewisElementInfo(here.s).name} selected` : 'Empty square: type a symbol to place an atom');
+    return lewisSay(here >= 0 ? `${lewisName(here)} selected` : 'Empty square: type a symbol to place an atom');
   }
   if (event.altKey) return;
   if (/^[a-z]$/i.test(event.key)) { event.preventDefault(); return lewisTypeLetter(event.key); }
@@ -756,8 +977,7 @@ function initLewisEditor() {
   const grid = $('#lewis-grid');
   grid.addEventListener('pointermove', event => {
     const hit = lewisHit(event);
-    const same = hit && lewis.hover && ['kind', 'x', 'y', 'side'].every(key => hit[key] === lewis.hover[key]);
-    if (same) return;
+    if (lewisSameHit(hit, lewis.hover)) return;
     lewis.hover = hit;
     renderLewisGrid();
     if (hit) lewisSay(lewisHitHint(hit));
@@ -768,13 +988,27 @@ function initLewisEditor() {
     if (!hit) return;
     grid.focus();
     lewis.typed = '';
+    const select = i => { lewis.cursor = { x: Math.round(lewis.model.atoms[i].x), y: Math.round(lewis.model.atoms[i].y) }; };
     if (hit.kind === 'place') lewisPlace(hit.x, hit.y, lewis.element);
-    else if (hit.kind === 'atom') { lewis.cursor = { x: hit.x, y: hit.y }; renderLewisEditor(); lewisSay(`${lewisElementInfo(hit.atom.s).name} selected`); }
-    else { lewis.cursor = { x: hit.x, y: hit.y }; (hit.kind === 'bond' ? lewisCycleBond : lewisCycleDots)(hit.atom, hit.side); }
+    else if (hit.kind === 'atom') { select(hit.i); renderLewisEditor(); lewisSay(`${lewisName(hit.i)} selected`); }
+    else if (hit.kind === 'bond') lewisCycleBond(hit.i, hit.j);
+    else { select(hit.i); lewisCycleDots(hit.i, hit.side); }
     lewis.hover = lewisHit(event);
     renderLewisGrid();
   });
   grid.addEventListener('keydown', lewisGridKeydown);
+
+  const angles = $('#lewis-bond-angles');
+  angles.addEventListener('keydown', event => {
+    const field = event.target.closest('[data-bond-angle]');
+    if (!field || event.key !== 'Enter') return;
+    event.preventDefault();
+    commitLewisAngle(field);
+  });
+  angles.addEventListener('change', event => {
+    const field = event.target.closest('[data-bond-angle]');
+    if (field) commitLewisAngle(field);
+  });
 
   $('#lewis-elements').addEventListener('click', event => {
     const button = event.target.closest('[data-lewis-element]');
@@ -789,13 +1023,12 @@ function initLewisEditor() {
     if (lewisSetElement(symbol)) lewisSay(`Click a square to place ${lewisElementInfo(symbol).name}`);
   });
   other.addEventListener('keydown', event => {
-    // Enter would submit the dialog's form and close it.
     if (event.key === 'Enter') { event.preventDefault(); grid.focus(); }
   });
   $$('[data-lewis-charge]').forEach(button => button.addEventListener('click', () => lewisChangeAtomCharge(Number(button.dataset.lewisCharge))));
   $$('[data-lewis-ion]').forEach(button => button.addEventListener('click', () => lewisChangeIonCharge(Number(button.dataset.lewisIon))));
   $('#lewis-brackets').addEventListener('click', () => {
-    const atom = lewisCursorAtom();
+    const atom = lewis.model.atoms[lewisCursorAtom()];
     if (!atom) return;
     lewisMutate(() => { atom.w = atom.w ? 0 : 1; });
     lewisSay(atom.w ? `Brackets around ${atom.s}` : 'Brackets removed');
@@ -804,7 +1037,7 @@ function initLewisEditor() {
   $('#lewis-undo').addEventListener('click', lewisUndo);
   $('#lewis-clear').addEventListener('click', () => {
     if (!lewis.model.atoms.length) return;
-    lewisMutate(() => { lewis.model = { f: lewis.model.f, q: 0, atoms: [] }; });
+    lewisMutate(() => { lewis.model = { f: lewis.model.f, q: 0, atoms: [], bonds: [] }; });
     lewisSay('Cleared. Undo brings it back.');
   });
   const formula = $('#lewis-formula');
