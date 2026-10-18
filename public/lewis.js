@@ -878,6 +878,22 @@ function lewisPickFromTable(element) {
   lewisSay(`Click a square to place ${element.name}`);
 }
 
+// Chrome keeps an invisible placeholder <br> at the end of the writing (after
+// "[ " for example), and the caret can end up just past it. Inserting there put
+// the diagram on a new line below what was typed, so step back in front of any
+// trailing <br> that has nothing visible after it. (A deliberate Enter leaves the
+// caret in a text node after its <br>, so it is not touched.)
+function lewisStayOnVisibleLine(range) {
+  if (!range.collapsed || range.startContainer !== input) return;
+  const offset = range.startOffset;
+  const before = input.childNodes[offset - 1];
+  if (before?.nodeName !== 'BR' || !before.previousSibling || before.previousSibling.nodeName === 'BR') return;
+  const after = [...input.childNodes].slice(offset);
+  if (after.some(node => node.textContent.replace(/[\s​]/g, '') || node.nodeName === 'SPAN')) return;
+  range.setStartBefore(before);
+  range.collapse(true);
+}
+
 function insertLewisDiagram() {
   const model = lewisNormalize(lewis.model);
   if (!model) return lewisSay('Place at least one atom first');
@@ -894,6 +910,7 @@ function insertLewisDiagram() {
     // Never inside a fraction half or an exponent: drop it just after that instead.
     const wrapper = elementFromNode(range.startContainer)?.closest('.live-fraction, sup, sub, .lewis-diagram');
     if (wrapper && editorContains(wrapper)) { range.setStartAfter(wrapper); range.collapse(true); }
+    lewisStayOnVisibleLine(range);
     range.insertNode(node);
     node.after(document.createTextNode(' '));
   }
