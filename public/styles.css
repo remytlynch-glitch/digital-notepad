@@ -963,17 +963,28 @@ dialog form { padding: 28px; }
   .active-work-step.is-earlier #active-step-state { display: none; }
 }
 
-/* 2026-10-17: Lewis dot diagrams - toolbar button, the inline diagram, the drawing dialog */
+/* 2026-10-17: Lewis dot diagrams - toolbar button, the inline diagram, Lewis mode (replaces the writing area; the reference shelf stays open) */
 .lewis-icon { width: 22px; height: 22px; fill: currentColor; }
 .lewis-diagram { display: inline-block; max-width: 100%; margin: 3px 4px; vertical-align: middle; line-height: 0; cursor: pointer; }
 .lewis-diagram img { display: block; max-width: 100%; height: auto; }
 .notepad-editor .lewis-diagram:hover, .work-step-content .lewis-diagram:hover { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .notepad-editor .lewis-diagram:focus-visible { outline: 3px solid var(--acid); }
 
-.lewis-dialog { width: min(920px, calc(100% - 30px)); }
-.lewis-form { display: grid; gap: 16px; padding: 24px 26px; }
-.lewis-form .dialog-heading h2 { margin: 0; font-size: 1.75rem; }
-.lewis-form .eyebrow { margin-bottom: 6px; }
+.composer-wrap.is-lewis-mode > .mode-badge,
+.composer-wrap.is-lewis-mode > .notepad-toolbar,
+.composer-wrap.is-lewis-mode > .active-work-step,
+.composer-wrap.is-lewis-mode .work-step-actions { display: none; }
+.composer-wrap.is-lewis-mode .work-step-content { cursor: default; }
+.composer-wrap.is-lewis-mode .work-step-content:hover { background: transparent; }
+.lewis-mode { container-type: inline-size; display: grid; gap: 16px; padding: 22px 24px 24px; background: #fbf8ef; }
+#work-steps:not(:empty) ~ .lewis-mode { border-top: 2px solid var(--ink); }
+.lewis-mode[hidden] { display: none; }
+.lewis-mode { scroll-margin-top: 84px; }
+.lewis-mode-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.lewis-mode-heading h2 { margin: 0; font-family: Georgia, serif; font-size: 1.6rem; font-weight: 500; line-height: 1.1; }
+.lewis-mode-heading .eyebrow { margin-bottom: 6px; color: #087478; }
+.lewis-back { min-height: 34px; padding: 0 12px; }
+.lewis-table-tip { margin: 0; color: var(--muted); font-size: .74rem; }
 .lewis-layout { display: grid; grid-template-columns: minmax(0, 1fr) 236px; gap: 18px; align-items: start; }
 .lewis-canvas { min-width: 0; }
 .lewis-grid { display: block; width: 100%; height: auto; border: 1px solid var(--ink); background: #fffdf5; cursor: pointer; touch-action: manipulation; }
@@ -1006,7 +1017,7 @@ dialog form { padding: 28px; }
 .lewis-chip-button:hover:not(:disabled), .lewis-chip-button[aria-pressed="true"] { color: var(--night); border-color: var(--ink); background: var(--cyan); }
 .lewis-remove { color: #9e4a30; }
 .lewis-remove:hover:not(:disabled) { color: #fffdf5; border-color: #9e4a30; background: #9e4a30; }
-.lewis-dialog button:disabled { opacity: .4; cursor: default; }
+.lewis-mode button:disabled { opacity: .4; cursor: default; }
 .lewis-auto { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: .84rem; cursor: pointer; }
 .lewis-auto input { width: 18px; height: 18px; margin: 0; accent-color: #087478; }
 .lewis-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -1014,7 +1025,7 @@ dialog form { padding: 28px; }
 .lewis-keys kbd { padding: 0 3px; border: 1px solid rgba(16,39,43,.3); border-radius: 2px; font-size: .62rem; }
 .lewis-insert { flex: 0 0 auto; min-width: 170px; padding: 0 18px; }
 
-@media (max-width: 760px) {
+@container (max-width: 640px) {
   .lewis-layout { grid-template-columns: 1fr; }
   .lewis-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
   .lewis-panel > .lewis-section:first-child { grid-column: 1 / -1; }
@@ -1022,11 +1033,12 @@ dialog form { padding: 28px; }
   .lewis-keys { display: none; }
   .lewis-footer { justify-content: stretch; }
   .lewis-insert { flex: 1 1 auto; }
+  /* Stacked, the panel is taller than the screen: keep Add in reach while scrolling. */
+  .lewis-footer { position: sticky; bottom: 0; z-index: 2; margin: 0 -24px -24px; padding: 12px 24px 16px; background: #fbf8ef; box-shadow: 0 -1px 0 var(--line); }
 }
 @media (max-width: 560px) {
-  .lewis-dialog { width: calc(100% - 20px); max-width: calc(100vw - 20px); box-shadow: 6px 6px 0 var(--acid); }
-  .lewis-form { gap: 12px; padding: 16px 14px; }
-  .lewis-form .dialog-heading h2 { font-size: 1.35rem; }
+  .lewis-mode { gap: 12px; padding: 16px 12px 14px; }
+  .lewis-mode-heading h2 { font-size: 1.3rem; }
   .lewis-status { min-height: 2.7em; font-size: .68rem; }
   .lewis-panel { grid-template-columns: 1fr 1fr; }
   .lewis-section { padding-bottom: 10px; }
@@ -1034,6 +1046,6 @@ dialog form { padding: 28px; }
   .lewis-stepper { grid-template-columns: 34px 36px 34px; }
   .lewis-row { font-size: .78rem; }
   .lewis-auto { font-size: .78rem; }
-  /* The dialog scrolls on a phone; keep the one action that matters in reach. */
-  .lewis-footer { position: sticky; bottom: 0; z-index: 1; margin: 0 -14px -16px; padding: 10px 14px 14px; background: var(--paper); }
+  /* Keep the one action that matters in reach while scrolling the panel. */
+  .lewis-footer { position: sticky; bottom: 0; z-index: 2; margin: 0 -12px -14px; padding: 10px 12px 12px; background: #fbf8ef; }
 }

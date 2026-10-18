@@ -10,7 +10,8 @@
 //   w     brackets around this atom      m  dots set by hand (auto fill skips it)
 //
 // Loaded before app.js; everything here that touches ELEMENTS, $ or the editor runs
-// only after app.js has defined them.
+// only after app.js has defined them. Drawing happens in "Lewis mode", which swaps
+// the writing area for the grid while the reference shelf stays open.
 
 const LEWIS_SIDES = ['t', 'r', 'b', 'l'];
 const LEWIS_SIDE_NAMES = { t: 'top', r: 'right', b: 'bottom', l: 'left' };
@@ -413,6 +414,8 @@ const lewis = {
   element: 'C',
   auto: true,
   target: null,
+  // A new drawing left without adding it waits here for the next visit.
+  draft: null,
   history: [],
   hover: null,
   typed: '',
@@ -594,6 +597,7 @@ function renderLewisGrid() {
 
 function renderLewisPanel() {
   $$('[data-lewis-element]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.lewisElement === lewis.element)));
+  $('#lewis-element-name').textContent = lewisElementInfo(lewis.element)?.name || '';
   const other = $('#lewis-element-input');
   if (document.activeElement !== other) other.value = LEWIS_QUICK_ELEMENTS.includes(lewis.element) ? '' : lewis.element;
   const atom = lewisCursorAtom();
@@ -613,9 +617,27 @@ function renderLewisEditor() {
   renderLewisPanel();
 }
 
+// Lewis mode takes the writing area's place inside the notepad card, so the
+// reference shelf (periodic table, ions) stays in view while drawing.
+function lewisModeActive() {
+  return !$('#lewis-mode').hidden;
+}
+
+function exitLewisMode({ keepDraft = true } = {}) {
+  if (!lewisModeActive()) return;
+  if (keepDraft && !lewis.target && lewis.model.atoms.length) lewis.draft = lewisNormalize(lewis.model);
+  $('#lewis-mode').hidden = true;
+  $('.composer-wrap').classList.remove('is-lewis-mode');
+  lewis.target = null;
+  lewis.hover = null;
+  input.focus();
+  restoreEditorRange();
+  $('.active-work-step').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function openLewisEditor(target = null) {
-  rememberEditorRange();
-  const existing = target ? lewisParse(target.getAttribute('data-lewis')) : null;
+  if (!lewisModeActive()) rememberEditorRange();
+  const existing = target ? lewisParse(target.getAttribute('data-lewis')) : (lewis.draft ? structuredClone(lewis.draft) : null);
   const narrow = matchMedia('(max-width: 560px)').matches;
   const atoms = existing?.atoms || [];
   const width = atoms.length ? Math.max(...atoms.map(atom => atom.x)) + 1 : 0;
@@ -632,10 +654,20 @@ function openLewisEditor(target = null) {
   lewis.hover = null;
   lewis.typed = '';
   $('#lewis-title').textContent = target ? 'Edit the Lewis structure' : 'Draw a Lewis structure';
-  lewisSay(LEWIS_DEFAULT_HINT);
+  lewisSay(!target && existing ? 'Your last drawing is back. Clear starts fresh.' : LEWIS_DEFAULT_HINT);
+  $('.composer-wrap').classList.add('is-lewis-mode');
+  $('#lewis-mode').hidden = false;
   renderLewisEditor();
-  $('#lewis-dialog').showModal();
-  $('#lewis-grid').focus();
+  $('#lewis-grid').focus({ preventScroll: true });
+  $('#lewis-mode').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Clicking an element in the periodic table (or finding it with the search)
+// makes it the element to place.
+function lewisPickFromTable(element) {
+  if (!lewisModeActive() || !element) return;
+  lewisSetElement(element.symbol);
+  lewisSay(`Click a square to place ${element.name}`);
 }
 
 function insertLewisDiagram() {
@@ -643,8 +675,8 @@ function insertLewisDiagram() {
   if (!model) return lewisSay('Place at least one atom first');
   const node = lewisNode(model);
   const target = lewis.target;
-  $('#lewis-dialog').close();
-  input.focus();
+  if (!target) lewis.draft = null;
+  exitLewisMode({ keepDraft: false });
   pushHistory();
   if (target && editorContains(target)) {
     target.replaceWith(node);
@@ -793,8 +825,5 @@ function initLewisEditor() {
     }
   });
   $('#lewis-insert').addEventListener('click', insertLewisDiagram);
-  const dialog = $('#lewis-dialog');
-  // The page's own shortcuts ("/" search, "?" help, Alt+letters) must not fire behind the dialog.
-  dialog.addEventListener('keydown', event => event.stopPropagation());
-  dialog.addEventListener('close', () => { lewis.target = null; lewis.hover = null; });
+  $('#lewis-back').addEventListener('click', () => exitLewisMode());
 }

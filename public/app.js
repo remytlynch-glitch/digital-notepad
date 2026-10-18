@@ -797,6 +797,7 @@ function renderWorkSteps() {
   $$('[data-step-open]').forEach(button => button.addEventListener('click', () => openStep(Number(button.dataset.stepOpen))));
   $$('[data-step-delete]').forEach(button => button.addEventListener('click', () => deleteWorkStep(Number(button.dataset.stepDelete))));
   $$('[data-step-content]').forEach(card => card.addEventListener('click', event => {
+    if (lewisModeActive()) return;
     // Clicking a diagram in an old step opens that step and the diagram's editor.
     const diagram = event.target.closest('.lewis-diagram');
     if (diagram) {
@@ -1478,6 +1479,7 @@ function categoryName(category) {
 function selectElement(element) {
   state.selectedElement = element;
   const charges = ELEMENT_CHARGES[element.symbol] || [];
+  lewisPickFromTable(element);
   $('#element-detail').innerHTML = `<button type="button" class="element-tile-preview" title="Click to copy atomic mass ${element.mass}" aria-label="Copy ${element.name} atomic mass, ${element.mass}"><span>${element.number}</span><em class="tile-charge">${charges.join(' ')}</em><strong>${element.symbol}</strong><small>${element.mass}</small></button><div><p class="detail-kicker">Selected element</p><h3>${element.name}</h3><p>${categoryName(element.category)} · period ${Math.min(element.period, 7)} · group ${element.group}${charges.length ? ` · <span class="nowrap">ion ${charges.join(', ')}</span>` : ''}</p></div>`;
 }
 
@@ -2826,13 +2828,14 @@ document.addEventListener('keydown', event => {
   if (event.altKey && event.key.toLowerCase() === 'r') { event.preventDefault(); toggleReferenceShelf(); }
   if (event.altKey && event.key.toLowerCase() === 'e') { event.preventDefault(); exportAll(); }
   if (event.altKey && event.key.toLowerCase() === 'c') { event.preventDefault(); setCalculatorOpen(true); }
-  if (event.altKey && event.key.toLowerCase() === 'l') { event.preventDefault(); openLewisEditor(); }
+  if (event.altKey && event.key.toLowerCase() === 'l') { event.preventDefault(); if (lewisModeActive()) exitLewisMode(); else openLewisEditor(); }
   if (event.altKey && event.key.toLowerCase() === 'v') { event.preventDefault(); $('#paste-question-dialog').showModal(); $('#paste-question-input').focus(); }
   if (event.key === '/' && document.activeElement !== input && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) { event.preventDefault(); $('#reference-search').focus(); }
   if (event.key === 'Escape' && !$('#shortcuts-dialog').open) {
     if (event.target.closest?.('#calculator-popover')) { setCalculatorOpen(false); input.focus(); }
     else if (!$('#highlight-menu').hidden) setHighlightMenuOpen(false);
     else if (!$('#saved-work-drawer').hidden) setSavedWorkOpen(false);
+    else if (lewisModeActive()) exitLewisMode();
     else input.focus();
   }
   if (event.key === '?' && document.activeElement !== input && !['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) $('#shortcuts-dialog').showModal();

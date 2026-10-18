@@ -7,7 +7,7 @@
     <meta name="description" content="A digital notepad for chemistry homework: write your working, balance equations, convert units, and keep every page." />
     <title>Digital Notepad — a notepad for chemistry homework</title>
     <link rel="icon" href="favicon.svg?v=1" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261017-01" />
+    <link rel="stylesheet" href="styles.css?v=20261017-02" />
   </head>
   <body>
     <a class="skip-link" href="#command-input">Skip to command input</a>
@@ -123,6 +123,64 @@
               data-placeholder="Write a note or try: balance Fe + O2 -> Fe2O3…"
             ></div>
           </div>
+          <section class="lewis-mode" id="lewis-mode" aria-labelledby="lewis-title" hidden>
+            <div class="lewis-mode-heading">
+              <div>
+                <p class="eyebrow">Lewis dot diagram</p>
+                <h2 id="lewis-title">Draw a Lewis structure</h2>
+              </div>
+              <button type="button" class="lewis-chip-button lewis-back" id="lewis-back" title="Back to the notepad (Esc). Your drawing is kept for next time.">← Notepad</button>
+            </div>
+            <div class="lewis-layout">
+              <div class="lewis-canvas">
+                <svg id="lewis-grid" class="lewis-grid" tabindex="0" role="application" aria-label="Lewis diagram grid. Arrow keys move, type a symbol to place an atom, Shift plus an arrow cycles a bond, Alt plus an arrow cycles dots." aria-describedby="lewis-status"></svg>
+                <p class="lewis-status" id="lewis-status" aria-live="polite"></p>
+              </div>
+              <div class="lewis-panel">
+                <section class="lewis-section" aria-labelledby="lewis-element-heading">
+                  <h3 id="lewis-element-heading">Element to place <strong id="lewis-element-name">Carbon</strong></h3>
+                  <div class="lewis-elements" id="lewis-elements"></div>
+                  <label class="lewis-other">Other symbol <input id="lewis-element-input" type="text" maxlength="2" autocomplete="off" spellcheck="false" placeholder="Xe" /></label>
+                  <p class="lewis-table-tip">Or click any element in the periodic table.</p>
+                </section>
+                <section class="lewis-section" aria-labelledby="lewis-atom-heading">
+                  <h3 id="lewis-atom-heading">Selected atom <strong id="lewis-atom-name">None</strong></h3>
+                  <div class="lewis-row">
+                    <span>Charge</span>
+                    <span class="lewis-stepper">
+                      <button type="button" data-lewis-charge="-1" aria-label="Lower the selected atom's charge">−</button>
+                      <output id="lewis-atom-charge">0</output>
+                      <button type="button" data-lewis-charge="1" aria-label="Raise the selected atom's charge">+</button>
+                    </span>
+                  </div>
+                  <div class="lewis-row lewis-row-buttons">
+                    <button type="button" class="lewis-chip-button" id="lewis-brackets" aria-pressed="false">[ ] Brackets</button>
+                    <button type="button" class="lewis-chip-button lewis-remove" id="lewis-remove">Remove</button>
+                  </div>
+                </section>
+                <section class="lewis-section" aria-labelledby="lewis-ion-heading">
+                  <h3 id="lewis-ion-heading">Whole ion</h3>
+                  <div class="lewis-row">
+                    <span>Charge</span>
+                    <span class="lewis-stepper">
+                      <button type="button" data-lewis-ion="-1" aria-label="Lower the whole ion's charge">−</button>
+                      <output id="lewis-ion-charge">0</output>
+                      <button type="button" data-lewis-ion="1" aria-label="Raise the whole ion's charge">+</button>
+                    </span>
+                  </div>
+                </section>
+                <label class="lewis-auto"><input type="checkbox" id="lewis-auto" checked /> Fill in dots automatically</label>
+                <div class="lewis-row lewis-row-buttons">
+                  <button type="button" class="lewis-chip-button" id="lewis-undo">Undo</button>
+                  <button type="button" class="lewis-chip-button" id="lewis-clear">Clear</button>
+                </div>
+              </div>
+            </div>
+            <div class="lewis-footer">
+              <p class="lewis-keys">Arrows move · type a symbol · <kbd>Shift</kbd>+arrow bond · <kbd>Alt</kbd>+arrow dots · <kbd>+</kbd> <kbd>−</kbd> charge · <kbd>Del</kbd> removes · <kbd>Enter</kbd> adds · <kbd>Esc</kbd> back</p>
+              <button type="button" class="build-question-button lewis-insert" id="lewis-insert">Add to notepad</button>
+            </div>
+          </section>
           <div class="work-steps" id="work-steps-after" aria-label="Later work steps"></div>
         </div>
 
@@ -262,66 +320,6 @@
       </form>
     </dialog>
 
-    <dialog id="lewis-dialog" class="lewis-dialog" aria-labelledby="lewis-title">
-      <form method="dialog" class="lewis-form">
-        <div class="dialog-heading">
-          <div>
-            <p class="eyebrow">Lewis dot diagram</p>
-            <h2 id="lewis-title">Draw a Lewis structure</h2>
-          </div>
-          <button class="close-button" value="close" aria-label="Close Lewis diagram">×</button>
-        </div>
-        <div class="lewis-layout">
-          <div class="lewis-canvas">
-            <svg id="lewis-grid" class="lewis-grid" tabindex="0" role="application" aria-label="Lewis diagram grid. Arrow keys move, type a symbol to place an atom, Shift plus an arrow cycles a bond, Alt plus an arrow cycles dots." aria-describedby="lewis-status"></svg>
-            <p class="lewis-status" id="lewis-status" aria-live="polite"></p>
-          </div>
-          <div class="lewis-panel">
-            <section class="lewis-section" aria-labelledby="lewis-element-heading">
-              <h3 id="lewis-element-heading">Element to place</h3>
-              <div class="lewis-elements" id="lewis-elements"></div>
-              <label class="lewis-other">Other symbol <input id="lewis-element-input" type="text" maxlength="2" autocomplete="off" spellcheck="false" placeholder="Xe" /></label>
-            </section>
-            <section class="lewis-section" aria-labelledby="lewis-atom-heading">
-              <h3 id="lewis-atom-heading">Selected atom <strong id="lewis-atom-name">None</strong></h3>
-              <div class="lewis-row">
-                <span>Charge</span>
-                <span class="lewis-stepper">
-                  <button type="button" data-lewis-charge="-1" aria-label="Lower the selected atom's charge">−</button>
-                  <output id="lewis-atom-charge">0</output>
-                  <button type="button" data-lewis-charge="1" aria-label="Raise the selected atom's charge">+</button>
-                </span>
-              </div>
-              <div class="lewis-row lewis-row-buttons">
-                <button type="button" class="lewis-chip-button" id="lewis-brackets" aria-pressed="false">[ ] Brackets</button>
-                <button type="button" class="lewis-chip-button lewis-remove" id="lewis-remove">Remove</button>
-              </div>
-            </section>
-            <section class="lewis-section" aria-labelledby="lewis-ion-heading">
-              <h3 id="lewis-ion-heading">Whole ion</h3>
-              <div class="lewis-row">
-                <span>Charge</span>
-                <span class="lewis-stepper">
-                  <button type="button" data-lewis-ion="-1" aria-label="Lower the whole ion's charge">−</button>
-                  <output id="lewis-ion-charge">0</output>
-                  <button type="button" data-lewis-ion="1" aria-label="Raise the whole ion's charge">+</button>
-                </span>
-              </div>
-            </section>
-            <label class="lewis-auto"><input type="checkbox" id="lewis-auto" checked /> Fill in dots automatically</label>
-            <div class="lewis-row lewis-row-buttons">
-              <button type="button" class="lewis-chip-button" id="lewis-undo">Undo</button>
-              <button type="button" class="lewis-chip-button" id="lewis-clear">Clear</button>
-            </div>
-          </div>
-        </div>
-        <div class="lewis-footer">
-          <p class="lewis-keys">Arrows move · type a symbol · <kbd>Shift</kbd>+arrow bond · <kbd>Alt</kbd>+arrow dots · <kbd>+</kbd> <kbd>−</kbd> charge · <kbd>Del</kbd> removes · <kbd>Enter</kbd> adds</p>
-          <button type="button" class="build-question-button lewis-insert" id="lewis-insert">Add to notepad</button>
-        </div>
-      </form>
-    </dialog>
-
     <dialog id="cloud-sync-dialog">
       <form method="dialog" class="cloud-sync-form">
         <div class="dialog-heading">
@@ -371,7 +369,7 @@
       </article>
     </template>
 
-    <script src="lewis.js?v=20261017-01"></script>
-    <script src="app.js?v=20261017-01"></script>
+    <script src="lewis.js?v=20261017-02"></script>
+    <script src="app.js?v=20261017-02"></script>
   </body>
 </html>
