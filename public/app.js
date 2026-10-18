@@ -1856,6 +1856,9 @@ function drawExportRuns(ctx, runs, x, baseline, size = 30) {
 // held a fraction is what used to leave half the page empty.
 const LINE_GAP = 10;
 function lineHasFraction(items) { return items.some(item => item.type === 'fraction'); }
+function lewisItemWidth(ctx, item) {
+  return Math.max(item.diagramWidth, item.captionRuns.length ? exportRunsWidth(ctx, item.captionRuns, LEWIS_CAPTION_SIZE) : 0);
+}
 // Lewis diagrams sit centred on the text's mid-height, 10px above the baseline.
 function lineLewisHeight(items) { return items.reduce((tallest, item) => item.type === 'lewis' ? Math.max(tallest, item.height) : tallest, 0); }
 function lineAscent(items) { return Math.max(lineHasFraction(items) ? 52 : 30, lineLewisHeight(items) / 2 + 10); }
@@ -1880,8 +1883,16 @@ function drawNotebookExportLine(ctx, items, x, y, maxWidth) {
   items.forEach(item => {
     if (item.type === 'text') return writeText(item);
     if (item.type === 'lewis') {
-      if (cursor > x && cursor + item.width + 12 > x + maxWidth) newRow();
-      cursor += drawLewis(ctx, item.model, cursor + 6, baseline - 10) + 12;
+      const width = lewisItemWidth(ctx, item);
+      if (cursor > x && cursor + width + 12 > x + maxWidth) newRow();
+      // The block (diagram, then its formula caption) is centred on the text's mid-height.
+      const top = baseline - 10 - item.height / 2;
+      drawLewis(ctx, item.model, cursor + 6 + (width - item.diagramWidth) / 2, top + item.diagramHeight / 2);
+      if (item.captionRuns.length) {
+        const captionWidth = exportRunsWidth(ctx, item.captionRuns, LEWIS_CAPTION_SIZE);
+        drawExportRuns(ctx, item.captionRuns, cursor + 6 + (width - captionWidth) / 2, top + item.diagramHeight + 26, LEWIS_CAPTION_SIZE);
+      }
+      cursor += width + 18;
       return;
     }
     const numerator = item.numerator.length ? item.numerator : [{ type: 'text', value: '1', script: '' }];
@@ -1916,8 +1927,9 @@ function measureNotebookExportLine(ctx, items, maxWidth) {
       return;
     }
     if (item.type === 'lewis') {
-      if (cursor > 0 && cursor + item.width + 12 > maxWidth) newRow();
-      cursor += item.width + 18;
+      const width = lewisItemWidth(ctx, item);
+      if (cursor > 0 && cursor + width + 12 > maxWidth) newRow();
+      cursor += width + 18;
       return;
     }
     const numerator = item.numerator.length ? item.numerator : [{ type: 'text', value: '1', script: '' }];
@@ -2200,7 +2212,7 @@ function wrapRangeInElement(range, tagName, className = '') {
   let node;
   while ((node = walker.nextNode())) {
     if (!range.intersectsNode(node)) continue;
-    if (node.parentElement?.closest('.live-fraction-line')) continue;
+    if (node.parentElement?.closest('.live-fraction-line, .lewis-diagram')) continue;
     if (!node.nodeValue.replaceAll('​', '').trim()) continue;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : node.nodeValue.length;
@@ -2315,7 +2327,7 @@ function numeratorSource(range) {
       if (node.classList.contains('lewis-diagram')) { parts.length = 0; text = ''; }
       continue;
     }
-    if (node.parentElement?.closest('.live-fraction')) { parts.length = 0; text = ''; continue; }
+    if (node.parentElement?.closest('.live-fraction, .lewis-diagram')) { parts.length = 0; text = ''; continue; }
     const atCaret = node === range.startContainer;
     const value = atCaret ? node.nodeValue.slice(0, range.startOffset) : node.nodeValue;
     parts.push({ node, start: text.length, length: value.length });

@@ -7,7 +7,7 @@
     <meta name="description" content="A digital notepad for chemistry homework: write your working, balance equations, convert units, and keep every page." />
     <title>Digital Notepad — a notepad for chemistry homework</title>
     <link rel="icon" href="favicon.svg?v=1" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css?v=20261017-02" />
+    <link rel="stylesheet" href="styles.css?v=20261017-03" />
   </head>
   <body>
     <a class="skip-link" href="#command-input">Skip to command input</a>
@@ -133,6 +133,11 @@
             </div>
             <div class="lewis-layout">
               <div class="lewis-canvas">
+                <label class="lewis-formula">
+                  <span>Formula</span>
+                  <input id="lewis-formula" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="e.g. NH4+, CO2, SO4 2-" />
+                  <output id="lewis-formula-preview" aria-hidden="true"></output>
+                </label>
                 <svg id="lewis-grid" class="lewis-grid" tabindex="0" role="application" aria-label="Lewis diagram grid. Arrow keys move, type a symbol to place an atom, Shift plus an arrow cycles a bond, Alt plus an arrow cycles dots." aria-describedby="lewis-status"></svg>
                 <p class="lewis-status" id="lewis-status" aria-live="polite"></p>
               </div>
@@ -169,7 +174,6 @@
                     </span>
                   </div>
                 </section>
-                <label class="lewis-auto"><input type="checkbox" id="lewis-auto" checked /> Fill in dots automatically</label>
                 <div class="lewis-row lewis-row-buttons">
                   <button type="button" class="lewis-chip-button" id="lewis-undo">Undo</button>
                   <button type="button" class="lewis-chip-button" id="lewis-clear">Clear</button>
@@ -369,7 +373,7 @@
       </article>
     </template>
 
-    <script src="lewis.js?v=20261017-02"></script>
-    <script src="app.js?v=20261017-02"></script>
+    <script src="lewis.js?v=20261017-03"></script>
+    <script src="app.js?v=20261017-03"></script>
   </body>
 </html>

@@ -3,11 +3,12 @@
 // The JSON is the source of truth: the sanitizer re-renders the image from it, and
 // the PNG export draws the same geometry straight onto its canvas.
 //
-// Model: { q: whole-ion charge, atoms: [{ x, y, s, q, d, r, b, w, m }] }
+// Model: { f: formula typed by the student, q: whole-ion charge, atoms: [{ x, y, s, q, d, r, b, w }] }
 //   x, y  grid cell          s  element symbol      q  atom charge
 //   d     dots per side [top, right, bottom, left], 0-2 each
 //   r, b  bond order to the atom on the right / below, 0-3
-//   w     brackets around this atom      m  dots set by hand (auto fill skips it)
+//   w     brackets around this atom
+// Dots are only ever placed by hand: working them out is the homework.
 //
 // Loaded before app.js; everything here that touches ELEMENTS, $ or the editor runs
 // only after app.js has defined them. Drawing happens in "Lewis mode", which swaps
@@ -19,9 +20,8 @@ const LEWIS_STEP = { t: [0, -1], r: [1, 0], b: [0, 1], l: [-1, 0] };
 const LEWIS_INK = '#10272b';
 const LEWIS_DISPLAY_UNIT = 40;
 const LEWIS_EXPORT_UNIT = 64;
-const LEWIS_AUTO_KEY = 'bench-lewis-auto-v1';
 const LEWIS_QUICK_ELEMENTS = ['H', 'C', 'N', 'O', 'F', 'Cl', 'Br', 'I', 'S', 'P', 'Na', 'K', 'Mg', 'Ca'];
-// Pauling values; only the order matters (who gets lone pairs first).
+// Pauling values; only the order matters (element order in the text formula).
 const LEWIS_ELECTRONEGATIVITY = { F: 3.98, O: 3.44, Cl: 3.16, N: 3.04, Kr: 3, Br: 2.96, I: 2.66, Xe: 2.6, S: 2.58, C: 2.55, Se: 2.55, H: 2.2, P: 2.19, As: 2.18, Te: 2.1, B: 2.04, Si: 1.9 };
 
 let lewisElementMap = null;
@@ -91,7 +91,7 @@ function lewisChargeText(charge) {
 }
 
 function lewisNewAtom(x, y, s) {
-  return { x, y, s, q: 0, d: [0, 0, 0, 0], r: 0, b: 0, w: 0, m: 0 };
+  return { x, y, s, q: 0, d: [0, 0, 0, 0], r: 0, b: 0, w: 0 };
 }
 
 // Validates untrusted JSON (it comes back out of saved HTML) and shifts the drawing
@@ -117,8 +117,7 @@ function lewisNormalize(raw) {
       d: LEWIS_SIDES.map((_, i) => int(atom.d?.[i], 0, 2)),
       r: int(atom.r, 0, 3),
       b: int(atom.b, 0, 3),
-      w: atom.w ? 1 : 0,
-      m: atom.m ? 1 : 0
+      w: atom.w ? 1 : 0
     });
   });
   if (!atoms.length) return null;
@@ -130,7 +129,59 @@ function lewisNormalize(raw) {
     if (!lewisNeighbour(index, atom, 'r')) atom.r = 0;
     if (!lewisNeighbour(index, atom, 'b')) atom.b = 0;
   });
-  return { q: int(raw.q, -4, 4), atoms };
+  return { f: lewisCleanFormula(raw.f), q: int(raw.q, -4, 4), atoms };
+}
+
+function lewisCleanFormula(value) {
+  return String(value || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 40);
+}
+
+// "NH4+" -> NH, 4 as subscript, + as superscript. Digits after a letter or
+// bracket are subscripts. The trailing sign is a charge; the digit before it
+// joins the charge after a space ("SO4 2-"), after another digit ("SO42-") or on
+// a lone element ("Fe3+", "O2-"). Anything after "^" is a superscript.
+function lewisFormulaRuns(formula) {
+  const text = lewisCleanFormula(formula).replaceAll('-', '−');
+  const runs = [];
+  const push = (value, script) => {
+    const last = runs.at(-1);
+    if (last && last.script === script) last.value += value;
+    else runs.push({ type: 'text', value, script });
+  };
+  let body = text;
+  let charge = '';
+  const caret = text.indexOf('^');
+  const sign = caret < 0 && text.match(/(\s?)(\d?)([+−])$/);
+  if (caret >= 0) {
+    body = text.slice(0, caret);
+    charge = text.slice(caret + 1);
+  } else if (sign) {
+    const before = text.slice(0, sign.index);
+    const digitJoins = sign[2] && (sign[1] || /\d$/.test(before) || /^[A-Z][a-z]?$/.test(before));
+    const cut = digitJoins ? sign.index : text.length - 1;
+    body = text.slice(0, cut).trimEnd();
+    charge = text.slice(cut).trim();
+  }
+  let inSub = false;
+  [...body].forEach((char, i) => {
+    const previous = body[i - 1] || '';
+    inSub = /\d/.test(char) && (/[A-Za-z)\]]/.test(previous) || (inSub && /\d/.test(previous)));
+    push(char, inSub ? 'sub' : '');
+  });
+  if (charge) push(charge, 'sup');
+  return runs;
+}
+
+function lewisFormulaHTMLNode(formula) {
+  const caption = document.createElement('span');
+  caption.className = 'lewis-caption';
+  lewisFormulaRuns(formula).forEach(run => {
+    if (!run.script) return caption.append(document.createTextNode(run.value));
+    const element = document.createElement(run.script);
+    element.textContent = run.value;
+    caption.append(element);
+  });
+  return caption;
 }
 
 function lewisParse(text) {
@@ -140,15 +191,15 @@ function lewisParse(text) {
 
 function lewisSerialize(model) {
   return JSON.stringify({
+    f: model.f || undefined,
     q: model.q || undefined,
-    atoms: model.atoms.map(({ x, y, s, q, d, r, b, w, m }) => {
+    atoms: model.atoms.map(({ x, y, s, q, d, r, b, w }) => {
       const atom = { x, y, s };
       if (q) atom.q = q;
       if (d.some(Boolean)) atom.d = d;
       if (r) atom.r = r;
       if (b) atom.b = b;
       if (w) atom.w = 1;
-      if (m) atom.m = 1;
       return atom;
     })
   });
@@ -158,6 +209,7 @@ function lewisSerialize(model) {
 // O, S or a halogen (H2O, HCl), otherwise last (CH4, NH3); the rest by
 // electronegativity, so NaCl and CO2 come out the way they are written.
 function lewisFormula(model) {
+  if (model.f) return model.f;
   const counts = new Map();
   model.atoms.forEach(atom => counts.set(atom.s, (counts.get(atom.s) || 0) + 1));
   const index = lewisIndex(model.atoms);
@@ -169,79 +221,6 @@ function lewisFormula(model) {
   const formula = [...counts].sort(([a], [b]) => rank(a) - rank(b)).map(([symbol, count]) => `${symbol}${count > 1 ? count : ''}`).join('');
   const charge = model.q || model.atoms.reduce((sum, atom) => sum + atom.q, 0);
   return `${formula}${lewisChargeText(charge)}`;
-}
-
-// Fills every automatic atom with lone electrons the way the textbook method does:
-// count the valence electrons (adjusted for charge), subtract the bonding pairs,
-// complete terminal atoms' octets first (most electronegative first), and give what
-// is left to the central atoms. Each bonded group of atoms is worked separately; the
-// whole-ion charge belongs to the largest group.
-function lewisAutoDots(model) {
-  const index = lewisIndex(model.atoms);
-  const seen = new Set();
-  const groups = [];
-  model.atoms.forEach(start => {
-    if (seen.has(start)) return;
-    const group = [];
-    const queue = [start];
-    seen.add(start);
-    while (queue.length) {
-      const atom = queue.pop();
-      group.push(atom);
-      LEWIS_SIDES.forEach(side => {
-        const other = lewisBond(index, atom, side) && lewisNeighbour(index, atom, side);
-        if (other && !seen.has(other)) { seen.add(other); queue.push(other); }
-      });
-    }
-    groups.push(group);
-  });
-  const largest = groups.reduce((best, group) => (group.length > best.length ? group : best), groups[0] || []);
-
-  groups.forEach(group => {
-    let electrons = group.reduce((sum, atom) => sum + lewisValence(atom.s) - atom.q - lewisBondSum(index, atom), 0);
-    if (group === largest) electrons -= model.q;
-    group.filter(atom => atom.m).forEach(atom => { electrons -= atom.d.reduce((sum, count) => sum + count, 0); });
-    const auto = group.filter(atom => !atom.m);
-    const info = auto.map(atom => {
-      const bonds = lewisBondSum(index, atom);
-      const freeSides = LEWIS_SIDES.filter(side => !lewisBond(index, atom, side));
-      const degree = 4 - freeSides.length;
-      const target = ['H', 'He'].includes(atom.s) ? 2 : 8;
-      return { atom, bonds, freeSides, degree, lone: 0, room: Math.max(0, Math.min(target - 2 * bonds, freeSides.length * 2)) };
-    });
-    info.sort((a, b) => (a.degree > 1) - (b.degree > 1)
-      || (LEWIS_ELECTRONEGATIVITY[b.atom.s] ?? 1) - (LEWIS_ELECTRONEGATIVITY[a.atom.s] ?? 1));
-    info.forEach(entry => {
-      const give = Math.max(0, Math.min(entry.room, electrons));
-      entry.lone = give;
-      electrons -= give;
-    });
-    // Expanded octets (I3-, SF4...) from period 3 down, as far as the free sides allow.
-    info.filter(entry => entry.degree > 1 && (lewisElementInfo(entry.atom.s)?.period || 0) >= 3).forEach(entry => {
-      const extra = Math.max(0, Math.min(entry.freeSides.length * 2 - entry.lone, electrons));
-      entry.lone += extra;
-      electrons -= extra;
-    });
-    info.forEach(entry => lewisPlaceDots(entry.atom, entry.lone, entry.freeSides, entry.bonds > 0));
-  });
-}
-
-// A lone atom gets its electrons one per side before pairing (C has four single
-// dots, O two pairs and two singles); a bonded atom gets lone pairs.
-function lewisPlaceDots(atom, electrons, freeSides, bonded) {
-  atom.d = [0, 0, 0, 0];
-  const slot = side => LEWIS_SIDES.indexOf(side);
-  if (!bonded && atom.s !== 'He' && freeSides.length === 4) {
-    const pairs = Math.max(0, electrons - 4);
-    freeSides.forEach((side, i) => { atom.d[slot(side)] = i < pairs ? 2 : (i < electrons ? 1 : 0); });
-    return;
-  }
-  let left = electrons;
-  freeSides.forEach(side => {
-    const count = Math.min(2, left);
-    atom.d[slot(side)] = count;
-    left -= count;
-  });
 }
 
 function lewisHalfWidth(symbol) {
@@ -355,6 +334,7 @@ function lewisNode(model) {
   img.alt = `Lewis diagram of ${lewisFormula(model)}`;
   img.draggable = false;
   span.append(img);
+  if (model.f) span.append(lewisFormulaHTMLNode(model.f));
   return span;
 }
 
@@ -363,9 +343,20 @@ function lewisNodeText(node) {
   return model ? `[Lewis: ${lewisFormula(model)}]` : '';
 }
 
+// The caption under an exported diagram: formula runs, size and line height.
+const LEWIS_CAPTION_SIZE = 24;
+const LEWIS_CAPTION_HEIGHT = 34;
+
+// Size of the diagram alone, and of the block (diagram + caption) it fills.
 function lewisExportSize(model) {
   const geometry = lewisGeometry(model);
-  return { width: (geometry.maxX - geometry.minX) * LEWIS_EXPORT_UNIT, height: (geometry.maxY - geometry.minY) * LEWIS_EXPORT_UNIT };
+  const diagramHeight = (geometry.maxY - geometry.minY) * LEWIS_EXPORT_UNIT;
+  return {
+    diagramWidth: (geometry.maxX - geometry.minX) * LEWIS_EXPORT_UNIT,
+    diagramHeight,
+    height: diagramHeight + (model.f ? LEWIS_CAPTION_HEIGHT : 0),
+    captionRuns: model.f ? lewisFormulaRuns(model.f) : []
+  };
 }
 
 // Draws with its left edge at x and its vertical middle on centerY; returns the width.
@@ -412,7 +403,6 @@ const lewis = {
   rows: 6,
   cursor: { x: 4, y: 2 },
   element: 'C',
-  auto: true,
   target: null,
   // A new drawing left without adding it waits here for the next visit.
   draft: null,
@@ -431,14 +421,16 @@ function lewisMutate(change) {
   lewis.history.push(JSON.stringify(lewis.model));
   if (lewis.history.length > 80) lewis.history.shift();
   change();
-  if (lewis.auto) lewisAutoDots(lewis.model);
   renderLewisEditor();
 }
 
 function lewisUndo() {
   const previous = lewis.history.pop();
   if (!previous) return lewisSay('Nothing to undo');
+  // Undo is for the drawing; the formula box keeps what is typed in it now.
+  const formula = lewis.model.f;
   lewis.model = JSON.parse(previous);
+  lewis.model.f = formula;
   renderLewisEditor();
 }
 
@@ -501,8 +493,8 @@ function lewisCycleDots(atom, side) {
   if (lewisBond(index, atom, side)) return lewisSay(`That side is bonded; remove the bond to put dots there`);
   const slot = LEWIS_SIDES.indexOf(side);
   const next = (atom.d[slot] + 1) % 3;
-  lewisMutate(() => { atom.d[slot] = next; atom.m = 1; });
-  lewisSay(`${['No dots', 'One dot', 'A pair'][next]} on the ${LEWIS_SIDE_NAMES[side]}${lewis.auto ? ' (this atom is now set by hand)' : ''}`);
+  lewisMutate(() => { atom.d[slot] = next; });
+  lewisSay(`${['No dots', 'One dot', 'A pair'][next]} on the ${LEWIS_SIDE_NAMES[side]}`);
 }
 
 function lewisChangeAtomCharge(delta) {
@@ -598,6 +590,7 @@ function renderLewisGrid() {
 function renderLewisPanel() {
   $$('[data-lewis-element]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.lewisElement === lewis.element)));
   $('#lewis-element-name').textContent = lewisElementInfo(lewis.element)?.name || '';
+  $('#lewis-formula-preview').replaceChildren(...(lewis.model.f ? [lewisFormulaHTMLNode(lewis.model.f)] : []));
   const other = $('#lewis-element-input');
   if (document.activeElement !== other) other.value = LEWIS_QUICK_ELEMENTS.includes(lewis.element) ? '' : lewis.element;
   const atom = lewisCursorAtom();
@@ -607,7 +600,6 @@ function renderLewisPanel() {
   $('#lewis-brackets').setAttribute('aria-pressed', String(Boolean(atom?.w)));
   $('#lewis-ion-charge').textContent = lewisChargeText(lewis.model.q) || '0';
   $('#lewis-undo').disabled = !lewis.history.length;
-  $('#lewis-auto').checked = lewis.auto;
   $('#lewis-insert').textContent = lewis.target ? 'Update diagram' : 'Add to notepad';
   $('#lewis-insert').disabled = !lewis.model.atoms.length;
 }
@@ -625,7 +617,9 @@ function lewisModeActive() {
 
 function exitLewisMode({ keepDraft = true } = {}) {
   if (!lewisModeActive()) return;
-  if (keepDraft && !lewis.target && lewis.model.atoms.length) lewis.draft = lewisNormalize(lewis.model);
+  if (keepDraft && !lewis.target && (lewis.model.atoms.length || lewis.model.f)) {
+    lewis.draft = lewisNormalize(lewis.model) || { f: lewisCleanFormula(lewis.model.f), q: 0, atoms: [] };
+  }
   $('#lewis-mode').hidden = true;
   $('.composer-wrap').classList.remove('is-lewis-mode');
   lewis.target = null;
@@ -647,7 +641,8 @@ function openLewisEditor(target = null) {
   const offsetX = Math.floor((lewis.cols - width) / 2);
   const offsetY = Math.floor((lewis.rows - height) / 2);
   atoms.forEach(atom => { atom.x += offsetX; atom.y += offsetY; });
-  lewis.model = { q: existing?.q || 0, atoms };
+  lewis.model = { f: existing?.f || '', q: existing?.q || 0, atoms };
+  $('#lewis-formula').value = lewis.model.f;
   lewis.cursor = atoms[0] ? { x: atoms[0].x, y: atoms[0].y } : { x: Math.floor(lewis.cols / 2), y: Math.floor((lewis.rows - 1) / 2) };
   lewis.target = target;
   lewis.history = [];
@@ -755,7 +750,6 @@ function lewisGridKeydown(event) {
 }
 
 function initLewisEditor() {
-  try { lewis.auto = localStorage.getItem(LEWIS_AUTO_KEY) !== 'off'; } catch {}
   $('#lewis-elements').innerHTML = LEWIS_QUICK_ELEMENTS
     .map(symbol => `<button type="button" data-lewis-element="${symbol}" aria-pressed="false" title="${lewisElementInfo(symbol).name}">${symbol}</button>`)
     .join('');
@@ -810,19 +804,16 @@ function initLewisEditor() {
   $('#lewis-undo').addEventListener('click', lewisUndo);
   $('#lewis-clear').addEventListener('click', () => {
     if (!lewis.model.atoms.length) return;
-    lewisMutate(() => { lewis.model = { q: 0, atoms: [] }; });
+    lewisMutate(() => { lewis.model = { f: lewis.model.f, q: 0, atoms: [] }; });
     lewisSay('Cleared. Undo brings it back.');
   });
-  $('#lewis-auto').addEventListener('change', event => {
-    lewis.auto = event.target.checked;
-    try { localStorage.setItem(LEWIS_AUTO_KEY, lewis.auto ? 'on' : 'off'); } catch {}
-    if (lewis.auto) {
-      lewisMutate(() => lewis.model.atoms.forEach(atom => { atom.m = 0; }));
-      lewisSay('Dots fill in from valence electrons, bonds and charge');
-    } else {
-      lewisSay('Dots are up to you: click beside an atom to add them');
-      renderLewisPanel();
-    }
+  const formula = $('#lewis-formula');
+  formula.addEventListener('input', () => {
+    lewis.model.f = formula.value;
+    renderLewisPanel();
+  });
+  formula.addEventListener('keydown', event => {
+    if (event.key === 'Enter') { event.preventDefault(); grid.focus(); }
   });
   $('#lewis-insert').addEventListener('click', insertLewisDiagram);
   $('#lewis-back').addEventListener('click', () => exitLewisMode());
